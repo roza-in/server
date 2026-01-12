@@ -23,6 +23,11 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY
 
 const otpPurposeSchema = z.enum(['registration', 'login', 'phone_verification', 'password_reset', 'email_verification', 'transaction']);
 
+// Password schema (shared)
+const passwordSchema = z.string()
+  .min(8, 'Password must be at least 8 characters')
+  .max(128, 'Password must not exceed 128 characters');
+
 // ============================================================================
 // OTP Schemas
 // ============================================================================
@@ -44,6 +49,8 @@ export const verifyOTPSchema = z.object({
     email: z.string().email('Invalid email address').optional(),
     otp: otpSchema,
     purpose: otpPurposeSchema.default('login'),
+    // Optional: allow setting a password during OTP login
+    password: passwordSchema,
   }).refine(
     (data) => data.phone || data.email,
     { message: 'Either phone or email is required' }
@@ -62,7 +69,8 @@ export const registerPatientSchema = z.object({
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim(),
-    email: emailSchema.optional(),
+    email: emailSchema,
+    password: passwordSchema,
     gender: genderSchema.optional(),
     dateOfBirth: dateSchema.optional(),
   }),
@@ -77,7 +85,8 @@ export const registerHospitalSchema = z.object({
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim(),
-    email: emailSchema.optional(),
+    email: emailSchema,
+    password: passwordSchema.optional(),
     
     // Hospital details
     hospital: z.object({
@@ -86,12 +95,17 @@ export const registerHospitalSchema = z.object({
         .max(255, 'Hospital name must not exceed 255 characters')
         .trim(),
       type: z.enum([
+        // Client-supported types
         'multi_specialty',
-        'super_specialty',
-        'general',
+        'single_specialty',
         'nursing_home',
         'clinic',
         'diagnostic_center',
+        'medical_college',
+        'primary_health',
+        // Additional types accepted by server
+        'super_specialty',
+        'general',
         'dental_clinic',
         'eye_hospital',
         'maternity',
@@ -133,6 +147,17 @@ export const registerHospitalSchema = z.object({
       specialties: z.array(z.string()).optional(),
       facilities: z.array(z.string()).optional(),
     }),
+  }),
+});
+
+// ============================================================================
+// Email/Password Login Schema
+// ============================================================================
+
+export const loginWithPasswordSchema = z.object({
+  body: z.object({
+    email: emailSchema,
+    password: passwordSchema,
   }),
 });
 
@@ -273,6 +298,7 @@ export type SendOTPInput = z.infer<typeof sendOTPSchema>['body'];
 export type VerifyOTPInput = z.infer<typeof verifyOTPSchema>['body'];
 export type RegisterPatientInput = z.infer<typeof registerPatientSchema>['body'];
 export type RegisterHospitalInput = z.infer<typeof registerHospitalSchema>['body'];
+export type LoginWithPasswordInput = z.infer<typeof loginWithPasswordSchema>['body'];
 export type GoogleOAuthInput = z.infer<typeof googleOAuthSchema>['body'];
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>['body'];
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>['body'];

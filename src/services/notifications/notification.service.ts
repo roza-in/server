@@ -109,11 +109,21 @@ class NotificationService {
     email?: string,
     vars: Record<string, string> = {}
   ) {
-    this.log.debug("Sending notification via forced channel", { channel });
+    this.log.debug("Sending notification via forced channel", {
+      channel,
+      hasWhatsappTemplate: !!template?.whatsapp,
+      hasSmsTemplate: !!template?.sms,
+      hasEmailTemplate: !!template?.email,
+    });
 
     switch (channel) {
       case "whatsapp":
-        if (!phone || !template.whatsapp) {
+        if (!phone) {
+          this.log.error("WhatsApp send failed: missing phone");
+          throw new Error("WHATSAPP_NOT_AVAILABLE");
+        }
+        if (!template.whatsapp) {
+          this.log.error("WhatsApp send failed: template name undefined (configure env WHATSAPP_TEMPLATE_OTP_*)");
           throw new Error("WHATSAPP_NOT_AVAILABLE");
         }
         await whatsappService.sendTemplate(
@@ -121,7 +131,10 @@ class NotificationService {
           template.whatsapp,
           Object.values(vars)
         );
-        this.log.info("Notification sent via WhatsApp (forced)", { phone });
+        this.log.info("Notification sent via WhatsApp (forced)", {
+          phone,
+          templateName: template.whatsapp,
+        });
         return;
 
       case "sms":

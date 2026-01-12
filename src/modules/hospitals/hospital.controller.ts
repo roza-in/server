@@ -65,7 +65,8 @@ export const updateHospital = asyncHandler(async (req: Request, res: Response) =
   const { hospitalId } = req.params;
   const user = (req as AuthenticatedRequest).user;
   const data = req.body as UpdateHospitalInput;
-  const hospital = await hospitalService.update(hospitalId, user.userId, data);
+  const isAdmin = user?.role === 'admin';
+  const hospital = await hospitalService.update(hospitalId, user.userId, data, isAdmin);
   return sendSuccess(res, hospital, MESSAGES.UPDATED);
 });
 

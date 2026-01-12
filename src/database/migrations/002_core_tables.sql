@@ -44,7 +44,7 @@ INSERT INTO specializations (name, display_name, description, sort_order) VALUES
   ('general_surgery', 'General Surgery', 'Surgical procedures', 19),
   ('physiotherapy', 'Physiotherapy', 'Physical rehabilitation', 20),
   ('ayurveda', 'Ayurveda', 'Traditional Indian medicine', 21),
-  ('homeopathy', 'Homeopathy', 'Homeopathic medicine', 22)
+  ('homeopathy', 'Homeopathy', 'Homeopathic medicine', 22),
 ON CONFLICT (name) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_specializations_name ON specializations(name);
@@ -62,13 +62,13 @@ CREATE TABLE IF NOT EXISTS users (
   phone VARCHAR(15) NOT NULL UNIQUE,
   phone_verified BOOLEAN DEFAULT false,
   phone_verified_at TIMESTAMPTZ,
-  email VARCHAR(255) UNIQUE,
+  email VARCHAR(255) NOT NULL UNIQUE,
   email_verified BOOLEAN DEFAULT false,
   email_verified_at TIMESTAMPTZ,
   password_hash VARCHAR(255),
   
   -- Basic Info
-  full_name VARCHAR(255),
+  full_name VARCHAR(255) NOT NULL,
   role user_role NOT NULL DEFAULT 'patient',
   avatar_url TEXT,
   
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS hospitals (
   
   -- Platform Settings
   subscription_tier subscription_tier DEFAULT 'free',
-  platform_fee_percentage DECIMAL(4,2) DEFAULT 7.00,  -- Default 7% for online
+  platform_fee_percentage DECIMAL(4,2) DEFAULT 8.00,  -- Default 8% for online
   platform_fee_in_person DECIMAL(4,2) DEFAULT 4.00,   -- Default 4% for in-person
   
   -- Verification

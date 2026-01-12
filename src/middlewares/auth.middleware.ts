@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, extractTokenFromHeader, TokenPayload } from '../config/jwt.js';
+import { getTokensFromReq } from '../utils/token-cookies.js';
 import {
   UnauthorizedError,
   TokenExpiredError,
@@ -30,7 +31,13 @@ export const authenticate = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const token = extractTokenFromHeader(req.headers.authorization);
+    let token = extractTokenFromHeader(req.headers.authorization);
+
+    // Fallback: try reading access token from cookies (server-set HttpOnly cookie)
+    if (!token) {
+      const { accessToken } = getTokensFromReq(req);
+      token = accessToken || null;
+    }
 
     if (!token) {
       throw new UnauthorizedError('Authentication token is required');
@@ -80,7 +87,7 @@ export const authenticate = async (
       // Update last activity
       await supabase
         .from('user_sessions')
-        .update({ last_activity_at: new Date().toISOString() })
+        .update({ last_active_at: new Date().toISOString() })
         .eq('id', decoded.sessionId);
     }
 
@@ -105,16 +112,17 @@ export const authenticate = async (
     }
 
     // Attach user to request
-    req.user = {
+    const authUser: Partial<AuthUser> = {
       userId: user.id,
       role: user.role as AuthUser['role'],
       phone: user.phone,
       email: user.email ?? undefined,
-      fullName: user.full_name ?? undefined,
       hospitalId: decoded.hospitalId,
       doctorId: decoded.doctorId,
       sessionId: decoded.sessionId,
     };
+    if (user.full_name) (authUser as any).fullName = user.full_name;
+    req.user = authUser as AuthUser;
 
     next();
   } catch (error) {
@@ -131,7 +139,13 @@ export const optionalAuth = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const token = extractTokenFromHeader(req.headers.authorization);
+    let token = extractTokenFromHeader(req.headers.authorization);
+
+    // Fallback to cookie access token if header not present
+    if (!token) {
+      const { accessToken } = getTokensFromReq(req);
+      token = accessToken || null;
+    }
 
     if (!token) {
       return next();
@@ -152,16 +166,17 @@ export const optionalAuth = async (
         .single();
 
       if (user && user.is_active && !user.is_blocked) {
-        req.user = {
+        const authUser: Partial<AuthUser> = {
           userId: user.id,
           role: user.role as AuthUser['role'],
           phone: user.phone,
           email: user.email ?? undefined,
-          fullName: user.full_name ?? undefined,
           hospitalId: decoded.hospitalId,
           doctorId: decoded.doctorId,
           sessionId: decoded.sessionId,
         };
+        if (user.full_name) (authUser as any).fullName = user.full_name;
+        req.user = authUser as AuthUser;
       }
     } catch {
       // Invalid token - continue without user
@@ -329,7 +344,13 @@ export const verifyRefreshToken = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { refresh_token } = req.body as { refresh_token?: string };
+    let { refresh_token } = req.body as { refresh_token?: string };
+
+    // Fallback to cookie refresh token if not provided in body
+    if (!refresh_token) {
+      const { refreshToken } = getTokensFromReq(req);
+      refresh_token = refreshToken || undefined;
+    }
 
     if (!refresh_token) {
       throw new UnauthorizedError('Refresh token is required');
@@ -353,13 +374,13 @@ export const verifyRefreshToken = async (
     const supabase = getSupabaseAdmin();
 
     if (decoded.sessionId) {
-      const { data: session } = await supabase
+      const { data: session, error: sessionError } = await supabase
         .from('user_sessions')
-        .select('id, is_active, refresh_token_hash, revoked_at')
+        .select('id, is_active, revoked_at')
         .eq('id', decoded.sessionId)
         .single();
 
-      if (!session || !session.is_active || session.revoked_at) {
+      if (sessionError || !session || !session.is_active || session.revoked_at) {
         throw new UnauthorizedError('Session has been revoked');
       }
     }

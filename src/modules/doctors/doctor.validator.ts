@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { z } from 'zod';
-import { uuidSchema, consultationTypeSchema, consultationFeeSchema } from '../../common/validators.js';
+import { uuidSchema, consultationTypeSchema, consultationFeeSchema, phoneSchema, emailSchema, medicalRegistrationSchema, experienceYearsSchema } from '../../common/validators.js';
 
 /**
  * Doctor validators using Zod
@@ -56,6 +56,34 @@ export const updateDoctorSchema = z.object({
   }),
 });
 
+// Create doctor schema (used by hospitals to create doctor profiles)
+export const createDoctorSchema = z.object({
+  body: z.object({
+    user_id: uuidSchema.optional(),
+    phone: phoneSchema.optional(),
+    full_name: z.string().min(1).max(255).optional(),
+    email: emailSchema.optional(),
+    qualifications: z.string().max(1000).optional().nullable(),
+    registrationNumber: medicalRegistrationSchema.optional().nullable(),
+    registrationCouncil: z.string().max(255).optional().nullable(),
+    licenseNumber: z.string().max(255).optional().nullable(),
+    specialization_id: uuidSchema.optional(),
+    specializationId: uuidSchema.optional(),
+    specialization: z.string().max(100).optional().nullable(),
+    yearsOfExperience: experienceYearsSchema.optional().nullable(),
+    bio: z.string().max(2000).optional().nullable(),
+    consultationDuration: z.number().int().min(5).max(120).optional(),
+    consultationFeeInPerson: consultationFeeSchema.optional().nullable(),
+    consultationFeeOnline: consultationFeeSchema.optional().nullable(),
+    followUpFee: consultationFeeSchema.optional().nullable(),
+    bufferTime: z.number().int().min(0).max(120).optional().nullable(),
+    maxPatientsPerDay: z.number().int().min(1).max(1000).optional().nullable(),
+    profileImageUrl: z.string().url().optional().nullable(),
+    languagesSpoken: z.array(z.string()).optional(),
+  }).refine((v) => !!v.user_id || !!v.phone, { message: 'Either user_id or phone is required' })
+  .refine((v) => !!v.specializationId || !!v.specialization_id || (!!v.specialization && String(v.specialization).trim().length > 0), { message: 'Either specializationId/specialization_id or specialization text is required' }),
+});
+
 // Get doctor availability schema
 export const getDoctorAvailabilitySchema = z.object({
   params: z.object({
@@ -99,4 +127,5 @@ export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>['body'];
 export type GetDoctorAvailabilityInput = z.infer<typeof getDoctorAvailabilitySchema>;
 export type DoctorStatsInput = z.infer<typeof doctorStatsSchema>;
 export type UpdateDoctorStatusInput = z.infer<typeof updateDoctorStatusSchema>;
+export type CreateDoctorInput = z.infer<typeof createDoctorSchema>['body'];
 

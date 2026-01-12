@@ -99,13 +99,18 @@ const envSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
   WHATSAPP_ACCESS_TOKEN: z.string().min(10),
   WHATSAPP_VERIFY_TOKEN: z.string().min(6),
+  // Optional overrides
+  WHATSAPP_LANGUAGE_CODE: z.string().optional(),
+  WHATSAPP_TEMPLATE_OTP_LOGIN: z.string().optional(),
+  WHATSAPP_TEMPLATE_OTP_REGISTRATION: z.string().optional(),
 
   /* =========================
-     Twilio SMS Service
+     MSG91 SMS Service
   ========================== */
-  TWILIO_ACCOUNT_SID: z.string().min(1),
-  TWILIO_AUTH_TOKEN: z.string().min(1),
-  TWILIO_PHONE_NUMBER: z.string().min(1),
+  MSG91_AUTH_KEY: z.string().min(1),
+  MSG91_SENDER_ID: z.string().min(1),
+  MSG91_ROUTE: z.string().default('4'),
+  MSG91_DLT_TEMPLATE_ID: z.string().optional(),
 
   /* =========================
      SendGrid Email Service

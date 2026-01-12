@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { authService } from './auth.service.js';
+import { supabaseOAuthService } from './oauth.service.js';
 import { sendSuccess, sendCreated } from '../../common/response.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
@@ -8,10 +9,13 @@ import type {
   VerifyOTPInput,
   RegisterPatientInput,
   RegisterHospitalInput,
+  LoginWithPasswordInput,
   GoogleOAuthInput,
   RefreshTokenInput,
   UpdateProfileInput,
 } from './auth.validator.js';
+import { isProduction } from '../../config/env.js';
+import { clearTokenCookies, setTokenCookies } from '@/utils/token-cookies.js';
 
 /**
  * Auth Controller - Production-ready authentication endpoints
@@ -38,11 +42,40 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response) => {
  */
 export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
   const data: VerifyOTPInput = req.body;
+
   const deviceInfo = extractDeviceInfo(req);
   const ipAddress = extractIPAddress(req);
   const userAgent = req.get('user-agent');
   
   const result = await authService.loginWithOTP(data, deviceInfo, ipAddress, userAgent);
+  // Set HttpOnly cookies for access and refresh tokens
+  try {
+    const expiresIn = result.tokens?.expiresIn ?? 3600; 
+    setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {
+    // ignore cookie failures
+  }
+
+  return sendSuccess(res, result, 'Login successful');
+});
+
+/**
+ * Login with email/password
+ * POST /api/v1/auth/login/password
+ */
+export const loginWithPassword = asyncHandler(async (req: Request, res: Response) => {
+  const data: LoginWithPasswordInput = req.body;
+
+  const deviceInfo = extractDeviceInfo(req);
+  const ipAddress = extractIPAddress(req);
+  const userAgent = req.get('user-agent');
+
+  const result = await authService.loginWithPassword(data, deviceInfo, ipAddress, userAgent);
+  try {
+    const expiresIn = result.tokens?.expiresIn ?? 3600;
+    setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {}
+
   return sendSuccess(res, result, 'Login successful');
 });
 
@@ -61,6 +94,11 @@ export const registerPatient = asyncHandler(async (req: Request, res: Response) 
   const userAgent = req.get('user-agent');
   
   const result = await authService.registerPatient(data, deviceInfo, ipAddress, userAgent);
+  try {
+    const expiresIn = result.tokens?.expiresIn ?? 3600;
+    setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {}
+
   return sendCreated(res, result, 'Account created successfully');
 });
 
@@ -75,6 +113,11 @@ export const registerHospital = asyncHandler(async (req: Request, res: Response)
   const userAgent = req.get('user-agent');
   
   const result = await authService.registerHospital(data, deviceInfo, ipAddress, userAgent);
+  try {
+    const expiresIn = result.tokens?.expiresIn ?? 3600;
+    setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {}
+
   return sendCreated(res, result, 'Hospital registered successfully');
 });
 
@@ -83,8 +126,9 @@ export const registerHospital = asyncHandler(async (req: Request, res: Response)
 // ============================================================================
 
 /**
- * Google OAuth login/register
+ * Google OAuth login/register (DEPRECATED - use Supabase Auth flow)
  * POST /api/v1/auth/google
+ * @deprecated Use GET /auth/google/url + POST /auth/google/callback instead
  */
 export const googleOAuth = asyncHandler(async (req: Request, res: Response) => {
   const { idToken } = req.body as GoogleOAuthInput;
@@ -93,6 +137,80 @@ export const googleOAuth = asyncHandler(async (req: Request, res: Response) => {
   const userAgent = req.get('user-agent');
   
   const result = await authService.googleOAuth(idToken, deviceInfo, ipAddress, userAgent);
+  return sendSuccess(res, result, 'Login successful');
+});
+
+/**
+ * Get Google OAuth redirect URL (Supabase Auth flow)
+ * GET /api/v1/auth/google/url?redirectUrl=http://localhost:3000/auth/callback
+ * Returns: { url: string, state: string }
+ */
+export const getGoogleOAuthUrl = asyncHandler(async (req: Request, res: Response) => {
+  const { redirectUrl } = req.query as { redirectUrl?: string };
+
+  if (!redirectUrl) {
+    return res.status(400).json({
+      success: false,
+      error: { message: 'redirectUrl query parameter is required' },
+    });
+  }
+
+  const { url, state } = await supabaseOAuthService.generateGoogleOAuthUrl(redirectUrl as string);
+
+  return sendSuccess(res, { url, state }, 'OAuth URL generated');
+});
+
+/**
+ * Handle Google OAuth callback from Supabase Auth
+ * POST /api/v1/auth/google/callback
+ * Body: { accessToken: string, userId: string }
+ * Returns: { user, tokens, isNewUser }
+ */
+export const handleGoogleCallback = asyncHandler(async (req: Request, res: Response) => {
+  const { accessToken, userId } = req.body as { accessToken?: string; userId?: string };
+
+  if (!accessToken || !userId) {
+    return res.status(400).json({
+      success: false,
+      error: { message: 'Supabase access token and user ID are required' },
+    });
+  }
+
+  const deviceInfo = extractDeviceInfo(req);
+  const ipAddress = extractIPAddress(req);
+  const userAgent = req.get('user-agent');
+
+  const result = await supabaseOAuthService.handleGoogleCallbackWithToken(accessToken, userId, deviceInfo, ipAddress, userAgent);
+  try {
+      const expiresIn = result.tokens?.expiresIn ?? 3600;
+      setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {}
+
+  return sendSuccess(res, result, 'Login successful');
+});
+
+/**
+ * Complete Google OAuth registration with phone
+ * POST /api/v1/auth/google/complete
+ * Body: { accessToken: string, userId: string, phone: string }
+ */
+export const completeGoogleCallback = asyncHandler(async (req: Request, res: Response) => {
+  const { accessToken, userId, phone } = req.body as { accessToken?: string; userId?: string; phone?: string };
+
+  if (!accessToken || !userId || !phone) {
+    return res.status(400).json({ success: false, error: { message: 'accessToken, userId and phone are required' } });
+  }
+
+  const deviceInfo = extractDeviceInfo(req);
+  const ipAddress = extractIPAddress(req);
+  const userAgent = req.get('user-agent');
+
+  const result = await supabaseOAuthService.completeGoogleCallbackWithToken(accessToken, userId, phone, deviceInfo, ipAddress, userAgent);
+  try {
+    const expiresIn = result.tokens?.expiresIn ?? 3600;
+    setTokenCookies(res, result.tokens?.accessToken || '', result.tokens?.refreshToken || '', { maxAgeSeconds: expiresIn, secure: isProduction, sameSite: 'lax' });
+  } catch (err) {}
+
   return sendSuccess(res, result, 'Login successful');
 });
 
@@ -125,7 +243,11 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   if (sessionId) {
     await authService.logout(sessionId);
   }
-  
+  // Clear auth cookies
+  try {
+    clearTokenCookies(res);
+  } catch (e) {}
+
   return sendSuccess(res, null, 'Logged out successfully');
 });
 

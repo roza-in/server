@@ -71,12 +71,15 @@ export const errorHandler = (
       logger.error(`${err.code}: ${err.message}`, { ...logContext, stack: err.stack });
     }
 
+    // For operational AppErrors we consider details safe to expose to clients.
+    const detailsToSend = err.isOperational ? err.details : (isDevelopment ? err.details : undefined);
+
     return sendError(
       res,
       err.message,
       err.statusCode,
       err.code,
-      isDevelopment ? err.details : undefined
+      detailsToSend
     );
   }
 

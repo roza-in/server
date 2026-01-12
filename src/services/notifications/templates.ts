@@ -1,4 +1,9 @@
 import type { NotificationPurpose } from "./types.js";
+import { env } from "../../config/env.js";
+
+// Sensible defaults if env is not configured. Update these to your approved names.
+const DEFAULT_OTP_LOGIN_TMPL = env.WHATSAPP_TEMPLATE_OTP_LOGIN || "rozx_otp_login";
+const DEFAULT_OTP_REG_TMPL = env.WHATSAPP_TEMPLATE_OTP_REGISTRATION || DEFAULT_OTP_LOGIN_TMPL;
 
 /**
  * Shape of a single notification template
@@ -23,7 +28,7 @@ export const templates: Record<NotificationPurpose, NotificationTemplate> = {
   // =================================================
 
   OTP_LOGIN: {
-    whatsapp: "rozx_otp_login",
+    whatsapp: DEFAULT_OTP_LOGIN_TMPL,
     sms: "Your ROZX login code is {{otp}}. Valid for {{expiry}} minutes.",
     email: {
       subject: "Your ROZX Login Code",
@@ -32,7 +37,8 @@ export const templates: Record<NotificationPurpose, NotificationTemplate> = {
   },
 
   OTP_REGISTRATION: {
-    whatsapp: "rozx_otp_registration",
+    // Use dedicated template if configured, else reuse the login template
+    whatsapp: DEFAULT_OTP_REG_TMPL,
     sms: "Welcome to ROZX! Your registration code is {{otp}}. Valid for {{expiry}} minutes.",
     email: {
       subject: "Welcome to ROZX – Registration Code",

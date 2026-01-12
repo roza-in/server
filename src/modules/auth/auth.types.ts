@@ -69,6 +69,11 @@ export interface GoogleOAuthInput {
   userAgent?: string;
 }
 
+export interface PasswordLoginInput {
+  email: string;
+  password: string;
+}
+
 // ============================================================================
 // WhatsApp OTP
 // ============================================================================
@@ -93,6 +98,7 @@ export interface RegisterPatientData {
   otp: string;
   fullName: string;
   email?: string;
+  password?: string;
   gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
   dateOfBirth?: string;
 }
@@ -102,6 +108,7 @@ export interface RegisterHospitalData {
   otp: string;
   fullName: string;
   email?: string;
+  password?: string;
   hospital: {
     name: string;
     type?: string;

@@ -1,90 +1,74 @@
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { getSupabaseAdmin } from '../../config/db.js';
 import { generateTokenPair, TokenPayload, verifyRefreshToken } from '../../config/jwt.js';
 import { env, isDevelopment } from '../../config/env.js';
 import { logger } from '../../common/logger.js';
-import {
-  UserNotFoundError,
-  UserAlreadyExistsError,
-  OTPExpiredError,
-  OTPInvalidError,
-  MaxOTPAttemptsError,
-  BadRequestError,
-  UnauthorizedError,
-} from '../../common/errors.js';
-import type {
-  AuthTokens,
-  LoginResponse,
-  OTPSendResponse,
-  GoogleOAuthData,
-  UserProfile,
-} from './auth.types.js';
-import type {
-  SendOTPInput,
-  VerifyOTPInput,
-  RegisterPatientInput,
-  RegisterHospitalInput,
-  RefreshTokenInput,
-} from './auth.validator.js';
-import type {
-  OTPPurpose,
-  UserSession,
-  UserRole,
-} from '../../types/database.types.js';
+import { notificationService } from '../../services/notifications/notification.service.js';
+import type { NotificationPurpose } from '../../services/notifications/types.js';
+import { UserNotFoundError, UserAlreadyExistsError, OTPExpiredError, OTPInvalidError, MaxOTPAttemptsError, BadRequestError, UnauthorizedError } from '../../common/errors.js';
+import type { AuthTokens, LoginResponse, OTPSendResponse, GoogleOAuthData, UserProfile, PasswordLoginInput } from './auth.types.js';
+import type { SendOTPInput, VerifyOTPInput, RegisterPatientInput, RegisterHospitalInput, RefreshTokenInput } from './auth.validator.js';
+import type { OTPChannel, OTPPurpose, UserSession, UserRole } from '../../types/database.types.js';
 
 const SESSION_EXPIRES_DAYS = 30;
+const OTP_TO_NOTIFICATION_PURPOSE: Partial<Record<OTPPurpose, NotificationPurpose>> = {
+  login: 'OTP_LOGIN',
+  registration: 'OTP_REGISTRATION',
+};
 
 /**
- * Auth Service - Production-ready authentication with OTP (SMS/Email), Google OAuth, and session management
- * Supports phone and email-based authentication via Supabase OTP system
+ * Auth Service - Production-ready authentication with WhatsApp OTP, Google OAuth, and session management
+ * OTP delivery currently uses Meta WhatsApp Cloud via notification service
  */
 class AuthService {
   private logger = logger.child('AuthService');
   private supabase = getSupabaseAdmin();
+  private readonly saltRounds = 10;
 
   // =================================================================
   // OTP Management
   // =================================================================
 
   /**
-   * Send OTP using Supabase Auth
-   * Supabase handles OTP generation and delivery via SMS or Email
+   * Generate a random OTP code
+   */
+  private generateOTP(): string {
+    const length = env.OTP_LENGTH;
+    return crypto.randomInt(Math.pow(10, length - 1), Math.pow(10, length)).toString();
+  }
+
+  /**
+   * Send OTP using Supabase + SMS delivery
    */
   async sendOTP(data: SendOTPInput): Promise<OTPSendResponse> {
     const { phone, email, purpose } = data;
     const identifier = phone || email;
 
     if (!identifier) {
-      throw new BadRequestError('Phone number or email is required');
+      throw new BadRequestError('Phone number is required for OTP');
     }
 
-    // Normalize phone number to E.164 format (+country_code + number)
-    let normalizedPhone = phone;
-    if (phone) {
-      // Remove spaces, dashes, and parentheses
-      normalizedPhone = phone.replace(/[\s\-()]/g, '');
-      // Ensure it starts with +
-      if (!normalizedPhone.startsWith('+')) {
-        // If no +, assume it's a 10-digit number and add India prefix
-        if (normalizedPhone.match(/^\d{10}$/)) {
-          normalizedPhone = '+91' + normalizedPhone;
-        } else {
-          throw new BadRequestError('Phone number must be in valid format (e.g., +911234567890 or 10-digit number)');
-        }
+    if (!phone) {
+      throw new BadRequestError('A phone number is required for SMS OTP delivery');
+    }
+
+    // Validate purpose-specific requirements
+    if (purpose === 'login') {
+      // Check if user exists
+      let query = this.supabase.from('users').select('id, is_active, is_blocked');
+      
+      if (phone) {
+        query = query.eq('phone', phone);
+      } else {
+        query = query.eq('email', email);
       }
-    }
 
-    // For login, validate user exists
-    if (purpose === 'login' && phone) {
-      const { data: user } = await this.supabase
-        .from('users')
-        .select('id, is_active, is_blocked')
-        .eq('phone', phone)
-        .single();
+      const { data: user } = await query.single();
 
       if (!user) {
-        throw new UserNotFoundError('No account found with this phone number');
+        throw new UserNotFoundError('No account found with this phone number or email');
       }
       if (user.is_blocked) {
         throw new UnauthorizedError('Your account has been blocked');
@@ -94,84 +78,145 @@ class AuthService {
       }
     }
 
-    // Use Supabase Auth signInWithOtp with normalized phone
-    try {
-      const { error } = await this.supabase.auth.signInWithOtp({
-        phone: normalizedPhone || undefined,
-        email: email || undefined,
-      });
+    // Generate OTP code
+    const code = this.generateOTP();
+    const expiresAt = new Date(Date.now() + env.OTP_EXPIRY_MINUTES * 60 * 1000);
 
-      if (error) {
-        this.logger.error('Failed to send OTP via Supabase Auth', error);
-        throw new BadRequestError('Failed to send OTP. Please try again.');
-      }
+    // Store OTP in database
+    const { data: otpRecord, error } = await this.supabase
+      .from('otp_codes')
+      .insert({
+        phone: phone || null,
+        email: email || null,
+        otp: code,
+        purpose: purpose as OTPPurpose,
+        channel: 'sms' as OTPChannel,
+        expires_at: expiresAt.toISOString(),
+        attempts: 0,
+        verified: false,
+      })
+      .select()
+      .single();
 
-      this.logger.info('OTP sent successfully via Supabase Auth', { identifier, purpose });
+    const otpId = (otpRecord as { id?: string })?.id;
+
+    if (error || !otpRecord) {
+      this.logger.error('Failed to create OTP record', error);
+      throw new BadRequestError('Failed to send OTP');
     }
-    catch (error) {
-      if (error instanceof BadRequestError) throw error;
-      this.logger.error('Error sending OTP', error);
-      throw new BadRequestError('Failed to send OTP. Please try again.');
+
+    // Dispatch via SMS using notification service
+    try {
+      await this.sendOTPViaSMS(phone, code, purpose as OTPPurpose);
+    } catch (sendError) {
+      // Clean up the OTP record if delivery fails
+      if (otpId) {
+        await this.supabase.from('otp_codes').delete().eq('id', otpId);
+      }
+      this.logger.error('Failed to send OTP via SMS', sendError);
+      throw new BadRequestError('Failed to send OTP via SMS');
+    }
+
+    this.logger.info(`OTP generated for ${identifier}: ${isDevelopment ? code : '✓'}`);
+
+    // In development, log the OTP for testing
+    if (isDevelopment) {
+      this.logger.info(`[DEV] OTP Code: ${code} - Valid for ${env.OTP_EXPIRY_MINUTES} minutes`);
     }
 
     return {
-      message: 'OTP sent successfully. Check your phone/email.',
-      phone,
+      message: 'OTP sent successfully via SMS',
+      phone: phone || undefined,
       email: email || undefined,
-      expiresIn: 900, // Supabase default is 900 seconds (15 minutes)
+      expiresIn: env.OTP_EXPIRY_MINUTES * 60,
+      // Only return OTP in development
+      ...(isDevelopment && { otp: code }),
     };
   }
 
   /**
-   * Send OTP via Supabase Auth
+   * Backward compatible helper for WhatsApp OTP
    */
-  async sendSupabaseOTP(data: SendOTPInput): Promise<OTPSendResponse> {
+  async sendWhatsAppOTP(data: SendOTPInput): Promise<OTPSendResponse> {
     return this.sendOTP(data);
   }
 
   /**
-   * Verify OTP using Supabase Auth
+   * Verify OTP (for phone or email)
    */
-  private async verifyOTP(identifier: string, code: string): Promise<any> {
-    // Normalize phone number to E.164 format if needed
-    let normalizedPhone = identifier;
-    if (identifier && !identifier.includes('@')) {
-      // It's a phone number, normalize it
-      normalizedPhone = identifier.replace(/[\s\-()]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        if (normalizedPhone.match(/^\d{10}$/)) {
-          normalizedPhone = '+91' + normalizedPhone;
-        }
-      }
+  private async verifyOTP(identifier: string, code: string, purpose: OTPPurpose): Promise<void> {
+    // Query by phone or email
+    let query = this.supabase
+      .from('otp_codes')
+      .select('*')
+      .eq('purpose', purpose)
+      .eq('verified', false)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    // Dynamic filter based on identifier type
+    if (identifier.includes('@')) {
+      query = query.eq('email', identifier);
+    } else {
+      query = query.eq('phone', identifier);
     }
 
-    // Supabase verifyOtp requires phone number with country code
-    const isEmail = normalizedPhone.includes('@');
-    const { data, error } = isEmail
-      ? await this.supabase.auth.verifyOtp({
-          email: normalizedPhone,
-          token: code,
-          type: 'email',
-        })
-      : await this.supabase.auth.verifyOtp({
-          phone: normalizedPhone,
-          token: code,
-          type: 'sms',
-        });
+    const { data: otpRecord, error } = await query.single();
 
-    if (error) {
-      this.logger.error('OTP verification failed', { identifier, error });
-      if (error.message?.toLowerCase().includes('expired') || error.code === 'otp_expired') {
-        throw new OTPExpiredError();
-      }
-      if (error.message?.toLowerCase().includes('invalid') || error.code === 'otp_invalid') {
-        throw new OTPInvalidError('Invalid OTP code');
-      }
-      throw new BadRequestError('OTP verification failed');
+    if (error || !otpRecord) {
+      throw new OTPInvalidError('Invalid or expired OTP');
     }
 
-    this.logger.info('OTP verified successfully', { identifier });
-    return data;
+    const otp = otpRecord as any;
+
+    // Check expiry
+    if (new Date() > new Date(otp.expires_at)) {
+      await this.supabase.from('otp_codes').delete().eq('id', otp.id);
+      throw new OTPExpiredError();
+    }
+
+    // Check max attempts
+    if (otp.attempts >= env.OTP_MAX_ATTEMPTS) {
+      await this.supabase.from('otp_codes').delete().eq('id', otp.id);
+      throw new MaxOTPAttemptsError();
+    }
+
+    // Verify code
+    if (otp.otp !== code) {
+      await this.supabase
+        .from('otp_codes')
+        .update({ attempts: (otp.attempts || 0) + 1 })
+        .eq('id', otp.id);
+      throw new OTPInvalidError('Invalid OTP code');
+    }
+
+    // Mark as verified and delete
+    await this.supabase.from('otp_codes').delete().eq('id', otp.id);
+    
+    this.logger.info(`OTP verified successfully for ${identifier}`);
+  }
+
+  /**
+   * Send SMS/Email OTP (placeholder - implement with SMS service like Twilio)
+   * For now, OTP is generated and stored in DB
+   */
+  private async sendOTPViaSMS(phone: string, code: string, purpose: OTPPurpose): Promise<void> {
+    const notificationPurpose = OTP_TO_NOTIFICATION_PURPOSE[purpose];
+
+    if (!notificationPurpose) {
+      this.logger.warn('Unsupported OTP purpose for SMS delivery', { purpose });
+      throw new BadRequestError('Unsupported OTP purpose');
+    }
+
+    await notificationService.send({
+      phone,
+      purpose: notificationPurpose,
+      channel: 'sms',
+      variables: {
+        otp: code,
+        expiry: String(env.OTP_EXPIRY_MINUTES),
+      },
+    });
   }
 
   // =================================================================
@@ -184,6 +229,7 @@ class AuthService {
   private async createSession(
     userId: string,
     refreshToken: string,
+    sessionId: string,
     deviceInfo?: any,
     ipAddress?: string,
     userAgent?: string
@@ -193,6 +239,7 @@ class AuthService {
     const { data: sessionData, error } = await this.supabase
       .from('user_sessions')
       .insert({
+        id: sessionId,
         user_id: userId,
         refresh_token: refreshToken,
         device_info: deviceInfo || null,
@@ -211,6 +258,14 @@ class AuthService {
     }
 
     return sessionData as any;
+  }
+
+  private async hashPassword(password: string): Promise<string> {
+    return bcrypt.hash(password, this.saltRounds);
+  }
+
+  private async verifyPassword(password: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(password, hash);
   }
 
   /**
@@ -248,17 +303,23 @@ class AuthService {
 
   /**
    * Login with OTP (phone or email)
+   * Note: This is for login only. Use registerPatient/registerHospital for registration.
    */
   async loginWithOTP(data: VerifyOTPInput, deviceInfo?: any, ipAddress?: string, userAgent?: string): Promise<LoginResponse> {
-    const { phone, email, otp, purpose = 'login' } = data;
+    const { phone, email, otp, purpose = 'login', password } = data as any;
     const identifier = phone || email;
+
+    // Reject registration attempts - use registerPatient endpoint instead
+    if (purpose === 'registration') {
+      throw new BadRequestError('For registration, use POST /api/v1/auth/register/patient with OTP, fullName, etc.');
+    }
 
     if (!identifier) {
       throw new BadRequestError('Phone number or email is required');
     }
 
-    // Verify OTP using Supabase Auth
-    await this.verifyOTP(identifier, otp);
+    // Verify OTP
+    await this.verifyOTP(identifier, otp, purpose);
 
     // Get user with relations
     let query = this.supabase
@@ -281,7 +342,7 @@ class AuthService {
       throw new UserNotFoundError();
     }
 
-    const user = userData as any;
+    let user = userData as any;
 
     // Check user status
     if (user.is_blocked) {
@@ -289,6 +350,16 @@ class AuthService {
     }
     if (!user.is_active) {
       throw new UnauthorizedError('Account is inactive');
+    }
+
+    // If a password is provided and user has no password set, hash & set now (post-OTP verification)
+    if (password && !user.password_hash) {
+      const passwordHash = await this.hashPassword(password);
+      await this.supabase
+        .from('users')
+        .update({ password_hash: passwordHash })
+        .eq('id', user.id);
+      user = { ...user, password_hash: passwordHash };
     }
 
     // Update last login
@@ -310,6 +381,8 @@ class AuthService {
     const doctorId = doctors?.[0]?.id;
 
     // Generate tokens
+    const sessionId = crypto.randomUUID();
+
     const tokenPayload: Omit<TokenPayload, 'iat' | 'exp' | 'iss'> = {
       userId: user.id,
       role: user.role,
@@ -317,13 +390,13 @@ class AuthService {
       email: user.email,
       hospitalId,
       doctorId,
-      sessionId: crypto.randomUUID(),
+      sessionId,
     };
 
     const tokens = generateTokenPair(tokenPayload);
 
-    // Create session
-    await this.createSession(user.id, tokens.refreshToken, deviceInfo, ipAddress, userAgent);
+    // Create session with the same sessionId used in JWT
+    await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
 
     return {
       user: this.formatUserProfile(user, hospitalId, doctorId),
@@ -337,13 +410,92 @@ class AuthService {
   }
 
   /**
+   * Login with email + password
+   */
+  async loginWithPassword(data: PasswordLoginInput, deviceInfo?: any, ipAddress?: string, userAgent?: string): Promise<LoginResponse> {
+    const { email, password } = data;
+
+    const { data: userData, error } = await this.supabase
+      .from('users')
+      .select(`
+        *,
+        doctors!doctors_user_id_fkey(id, hospital_id),
+        hospitals!hospitals_admin_user_id_fkey(id)
+      `)
+      .ilike('email', email)
+      .single();
+
+    if (error || !userData) {
+      throw new UserNotFoundError('No account found with this email');
+    }
+
+    const user = userData as any;
+
+    if (user.is_blocked) {
+      throw new UnauthorizedError(`Account blocked: ${user.blocked_reason || 'Contact support'}`);
+    }
+    if (!user.is_active) {
+      throw new UnauthorizedError('Account is inactive');
+    }
+    if (!user.password_hash) {
+      throw new UnauthorizedError('Password login is not enabled for this account');
+    }
+
+    const isValid = await this.verifyPassword(password, user.password_hash);
+    if (!isValid) {
+      throw new UnauthorizedError('Invalid email or password');
+    }
+
+    await this.supabase
+      .from('users')
+      .update({
+        last_login_at: new Date().toISOString(),
+        email_verified: true,
+        email_verified_at: user.email_verified_at || new Date().toISOString(),
+      })
+      .eq('id', user.id);
+
+    const doctors = user.doctors as any[];
+    const hospitals = user.hospitals as any[];
+    const hospitalId = hospitals?.[0]?.id || doctors?.[0]?.hospital_id;
+    const doctorId = doctors?.[0]?.id;
+
+    const sessionId = crypto.randomUUID();
+
+    const tokenPayload: Omit<TokenPayload, 'iat' | 'exp' | 'iss'> = {
+      userId: user.id,
+      role: user.role,
+      phone: user.phone,
+      email: user.email,
+      hospitalId,
+      doctorId,
+      sessionId,
+    };
+
+    const tokens = generateTokenPair(tokenPayload);
+
+    await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
+
+    return {
+      user: this.formatUserProfile(user, hospitalId, doctorId),
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: 3600,
+      },
+      isNewUser: false,
+    };
+  }
+
+  /**
    * Register patient with OTP
    */
   async registerPatient(data: RegisterPatientInput, deviceInfo?: any, ipAddress?: string, userAgent?: string): Promise<LoginResponse> {
-    const { phone, otp, fullName, email, gender, dateOfBirth } = data;
+    const { phone, otp, fullName, email, password, gender, dateOfBirth } = data;
 
-    // Verify OTP using Supabase Auth
-    await this.verifyOTP(phone, otp);
+    // Determine which identifier was used for OTP (in this case, always phone)
+    // Verify OTP
+    await this.verifyOTP(phone, otp, 'registration');
 
     // Check if user already exists
     const { data: existingUser } = await this.supabase
@@ -357,6 +509,8 @@ class AuthService {
     }
 
     // Create user
+    const passwordHash = password ? await this.hashPassword(password) : null;
+
     const { data: userData, error } = await this.supabase
       .from('users')
       .insert({
@@ -366,6 +520,7 @@ class AuthService {
         role: 'patient' as UserRole,
         phone_verified: true,
         phone_verified_at: new Date().toISOString(),
+        password_hash: passwordHash,
         gender: gender || null,
         date_of_birth: dateOfBirth || null,
         is_active: true,
@@ -381,33 +536,27 @@ class AuthService {
 
     const user = userData as any;
 
-    // Create patient credits wallet with initial balance
-    await this.supabase.from('patient_credits').insert({
-      patient_id: user.id,
-      amount: 0,
-      balance: 0,
-      source: 'registration',
-      status: 'active',
-    });
+    // Note: patient_credits are created automatically by database trigger
+    // when a patient user is inserted
 
-    // Create notification preferences
-    await this.supabase.from('notification_preferences').insert({
-      user_id: user.id,
-    });
+    // Note: notification_preferences are created automatically by database trigger
+    // when a user is inserted
 
     // Generate tokens
+    const sessionId = crypto.randomUUID();
+
     const tokenPayload: Omit<TokenPayload, 'iat' | 'exp' | 'iss'> = {
       userId: user.id,
       role: 'patient',
       phone: user.phone,
       email: user.email,
-      sessionId: crypto.randomUUID(),
+      sessionId,
     };
 
     const tokens = generateTokenPair(tokenPayload);
 
-    // Create session
-    await this.createSession(user.id, tokens.refreshToken, deviceInfo, ipAddress, userAgent);
+    // Create session with matching sessionId
+    await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
 
     return {
       user: this.formatUserProfile(user),
@@ -424,10 +573,10 @@ class AuthService {
    * Register hospital with OTP
    */
   async registerHospital(data: RegisterHospitalInput, deviceInfo?: any, ipAddress?: string, userAgent?: string): Promise<LoginResponse> {
-    const { phone, otp, fullName, email, hospital } = data;
+    const { phone, otp, fullName, email, password, hospital } = data;
 
-    // Verify OTP using Supabase Auth
-    await this.verifyOTP(phone, otp);
+    // Verify OTP
+    await this.verifyOTP(phone, otp, 'registration');
 
     // Check if user already exists
     const { data: existingUser } = await this.supabase
@@ -459,6 +608,8 @@ class AuthService {
     }
 
     // Create admin user
+    const passwordHash = password ? await this.hashPassword(password) : null;
+
     const { data: userData, error: userError } = await this.supabase
       .from('users')
       .insert({
@@ -468,6 +619,7 @@ class AuthService {
         role: 'hospital' as UserRole,
         phone_verified: true,
         phone_verified_at: new Date().toISOString(),
+        password_hash: passwordHash,
         is_active: true,
         is_blocked: false,
         address: {
@@ -529,25 +681,25 @@ class AuthService {
 
     const hospital_record = hospitalRecord as { id: string };
 
-    // Create notification preferences
-    await this.supabase.from('notification_preferences').insert({
-      user_id: user.id,
-    });
+    // Note: notification_preferences are created automatically by database trigger
+    // when a user is inserted
 
     // Generate tokens
+    const sessionId = crypto.randomUUID();
+
     const tokenPayload: Omit<TokenPayload, 'iat' | 'exp' | 'iss'> = {
       userId: user.id,
       role: 'hospital',
       phone: user.phone,
       email: user.email,
       hospitalId: hospital_record.id,
-      sessionId: crypto.randomUUID(),
+      sessionId,
     };
 
     const tokens = generateTokenPair(tokenPayload);
 
-    // Create session
-    await this.createSession(user.id, tokens.refreshToken, deviceInfo, ipAddress, userAgent);
+    // Create session with matching sessionId
+    await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
 
     return {
       user: this.formatUserProfile(user, hospital_record.id),
@@ -622,6 +774,10 @@ class AuthService {
 
     if (!user) {
       // Create new user (phone required, use empty string for Google OAuth users until phone is verified)
+      // Generate a strong random password for OAuth-created users and store its hash
+      const randomPassword = crypto.randomBytes(24).toString('hex');
+      const passwordHash = await this.hashPassword(randomPassword);
+
       const { data: newUserData, error } = await this.supabase
         .from('users')
         .insert({
@@ -633,6 +789,7 @@ class AuthService {
           email_verified_at: new Date().toISOString(),
           avatar_url: avatarUrl,
           google_id: googleId,
+          password_hash: passwordHash,
           is_active: true,
           is_blocked: false,
         })
@@ -666,6 +823,12 @@ class AuthService {
       const updates: any = {
         last_login_at: new Date().toISOString(),
       };
+      // Ensure existing OAuth user has a password hash set (so password login can be enabled later)
+      if (!user.password_hash) {
+        const randomPassword = crypto.randomBytes(24).toString('hex');
+        const passwordHash = await this.hashPassword(randomPassword);
+        updates.password_hash = passwordHash;
+      }
 
       if (!user.google_id) {
         updates.google_id = googleId;
@@ -690,6 +853,8 @@ class AuthService {
     const doctorId = doctors?.[0]?.id;
 
     // Generate tokens
+    const sessionId = crypto.randomUUID();
+
     const tokenPayload: Omit<TokenPayload, 'iat' | 'exp' | 'iss'> = {
       userId: user.id,
       role: user.role,
@@ -697,13 +862,13 @@ class AuthService {
       email: user.email,
       hospitalId,
       doctorId,
-      sessionId: crypto.randomUUID(),
+      sessionId,
     };
 
     const tokens = generateTokenPair(tokenPayload);
 
-    // Create session
-    await this.createSession(user.id, tokens.refreshToken, deviceInfo, ipAddress, userAgent);
+    // Create session with matching sessionId
+    await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
 
     return {
       user: this.formatUserProfile(user, hospitalId, doctorId),
@@ -843,7 +1008,14 @@ class AuthService {
       throw new UserNotFoundError();
     }
 
-    return user as UserProfile;
+    // Extract hospital/doctor IDs for token compatibility
+    const doctors = (user as any).doctors as any[];
+    const hospitals = (user as any).hospitals as any[];
+    const hospitalId = hospitals?.[0]?.id || doctors?.[0]?.hospital_id;
+    const doctorId = doctors?.[0]?.id;
+
+    // Return formatted profile to keep API consistent with login responses
+    return this.formatUserProfile(user as any, hospitalId, doctorId) as UserProfile;
   }
 
   // =================================================================
@@ -854,6 +1026,11 @@ class AuthService {
    * Format user profile for API response
    */
   private formatUserProfile(user: any, hospitalId?: string, doctorId?: string) {
+    const doctors = user.doctors as any[];
+    const hospitals = user.hospitals as any[];
+    const doctor = doctors?.[0] || null;
+    const hospital = hospitals?.[0] || null;
+
     return {
       id: user.id,
       phone: user.phone,
@@ -861,8 +1038,13 @@ class AuthService {
       fullName: user.full_name,
       role: user.role,
       avatarUrl: user.avatar_url,
+      // Provide both snake_case and camelCase keys for frontend compatibility
+      profile_picture_url: user.avatar_url,
+      profilePictureUrl: user.avatar_url,
       phoneVerified: user.phone_verified,
       emailVerified: user.email_verified,
+      doctor,
+      hospital,
       hospitalId,
       doctorId,
       createdAt: user.created_at,

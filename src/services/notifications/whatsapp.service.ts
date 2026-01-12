@@ -18,7 +18,10 @@ class WhatsAppService {
     templateName: string,
     variables: string[]
   ): Promise<void> {
+    // Normalize phone to E.164 digits only for WhatsApp API (no spaces/plus)
+    const to = String(phone).replace(/[^\d]/g, "");
     const url = `https://graph.facebook.com/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+    const languageCode = env.WHATSAPP_LANGUAGE_CODE || "en_US";
 
     try {
       const params: WhatsAppTemplateParam[] = variables.map((value) => ({
@@ -27,20 +30,21 @@ class WhatsAppService {
       }));
 
       this.log.debug("Sending WhatsApp template", {
-        phone,
+        phone: to,
         templateName,
         paramsCount: params.length,
+        languageCode,
       });
 
       await axios.post(
         url,
         {
           messaging_product: "whatsapp",
-          to: phone,
+          to: to,
           type: "template",
           template: {
             name: templateName,
-            language: { code: "en" },
+            language: { code: languageCode },
             components: params.length
               ? [
                   {
@@ -61,7 +65,7 @@ class WhatsAppService {
       );
 
       this.log.info("WhatsApp message sent successfully", {
-        phone,
+        phone: to,
         templateName,
       });
     } catch (error: any) {
@@ -69,8 +73,9 @@ class WhatsAppService {
         error?.response?.data?.error || error?.response?.data || error?.message;
 
       this.log.error("WhatsApp delivery failed", {
-        phone,
+        phone: to,
         templateName,
+        languageCode,
         metaError,
       });
 

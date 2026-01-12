@@ -366,7 +366,6 @@ BEGIN
     appointment_reminders,
     promotional_messages,
     health_tips,
-    system_updates,
     sms_enabled,
     email_enabled,
     push_enabled,
@@ -376,7 +375,6 @@ BEGIN
     quiet_hours_end
   ) VALUES (
     NEW.id,
-    true,
     true,
     true,
     true,
@@ -408,9 +406,8 @@ CREATE OR REPLACE FUNCTION create_patient_credits()
 RETURNS TRIGGER AS $$
 BEGIN
   IF NEW.role = 'patient' THEN
-    INSERT INTO patient_credits (patient_id, balance)
-    VALUES (NEW.id, 0)
-    ON CONFLICT (patient_id) DO NOTHING;
+    INSERT INTO patient_credits (patient_id, amount, balance, source, status)
+    VALUES (NEW.id, 0, 0, 'registration', 'active');
   END IF;
   RETURN NEW;
 END;
