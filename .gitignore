@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -9,10 +8,10 @@ dist/
 build/
 *.js.map
 
-# Environment files
-.env.local
-.env.development
-.env.production
+# Environment files (CRITICAL)
+.env
+.env.*
+!.env.example
 
 # IDE & Editor
 .vscode/
