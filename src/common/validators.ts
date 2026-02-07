@@ -117,8 +117,7 @@ export const coordinatesSchema = z.object({
  * Address validator
  */
 export const addressSchema = z.object({
-  addressLine1: z.string().min(1).max(255),
-  addressLine2: z.string().max(255).optional(),
+  address: z.string().min(1).max(255),
   city: z.string().min(1).max(100),
   state: z.string().min(1).max(100),
   pincode: pincodeSchema,
@@ -209,7 +208,8 @@ export const genderSchema = z.enum(['male', 'female', 'other']);
 export const hospitalTierSchema = z.enum(['standard', 'premium', 'enterprise']);
 export const verificationStatusSchema = z.enum(['pending', 'verified', 'rejected', 'under_review']);
 export const doctorStatusSchema = z.enum(['active', 'on_leave', 'inactive']);
-export const consultationTypeSchema = z.enum(['online', 'in_person', 'both']);
+export type ConsultationType = 'in_person' | 'online' | 'walk_in';
+export const consultationTypeSchema = z.enum(['in_person', 'online', 'walk_in']);
 export const dayOfWeekSchema = z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
 export const payoutModelSchema = z.enum(['fixed_per_consultation', 'percentage', 'monthly_retainer', 'custom']);
 export const paymentFrequencySchema = z.enum(['daily', 'weekly', 'monthly']);
@@ -217,12 +217,10 @@ export const paymentFrequencySchema = z.enum(['daily', 'weekly', 'monthly']);
 export const appointmentStatusSchema = z.enum([
   'pending_payment',
   'confirmed',
-  'in_waiting_room',
+  'checked_in',
   'in_progress',
   'completed',
-  'cancelled_by_patient',
-  'cancelled_by_doctor',
-  'cancelled_by_hospital',
+  'cancelled',
   'no_show',
   'rescheduled',
 ]);

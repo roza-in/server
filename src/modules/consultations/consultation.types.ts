@@ -18,6 +18,7 @@ export interface Consultation {
   startedAt: string | null;
   endedAt: string | null;
   doctorNotes: string | null;
+  vitals: any | null;
   recordingUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -104,6 +105,11 @@ export interface VideoCallToken {
   token: string;
   roomId: string;
   expiresAt: string;
+  // Agora SDK fields
+  appId?: string;
+  uid?: number;
+  channelName?: string;
+  provider: 'agora' | 'zegocloud';
 }
 
 // Consultation filters
@@ -116,3 +122,4 @@ export interface ConsultationFilters {
   page?: number;
   limit?: number;
 }
+

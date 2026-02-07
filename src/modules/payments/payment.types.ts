@@ -16,22 +16,25 @@ import type {
 export interface Payment {
   id: string;
   appointment_id: string | null;
-  patient_id: string;
-  doctor_id: string | null;
+  payer_user_id: string;
+  doctor_id: string | null; // Does not exist in schema, but leaving for now if mapped
   hospital_id: string | null;
-  payment_type: 'appointment' | 'subscription' | 'credits' | 'other';
-  amount: number;
+  payment_type: 'consultation' | 'medicine_order' | 'platform_fee'; // matched enum
+  base_amount: number; // added
+  total_amount: number; // renamed from amount
+  net_payable: number; // renamed from doctor_amount
+  // amount: number; // removed or optional alias? Better remove to force fix.
+  // doctor_amount: number; // removed
+  // hospital_amount: number; // removed
   platform_fee: number;
-  doctor_amount: number;
-  hospital_amount: number;
   gst_amount: number;
   currency: string;
   status: PaymentStatus;
   payment_method: PaymentMethod | null;
-  razorpay_order_id: string | null;
-  razorpay_payment_id: string | null;
-  razorpay_signature: string | null;
-  metadata: Record<string, any> | null;
+  gateway_order_id: string | null;
+  gateway_payment_id: string | null;
+  gateway_signature: string | null;
+  gateway_response: Record<string, any> | null;
   paid_at: string | null;
   created_at: string;
   updated_at: string;
@@ -43,17 +46,22 @@ export interface PaymentWithDetails extends Payment {
     booking_id: string;
     appointment_date: string;
     start_time: string;
+    // New schema fields
+    appointment_number?: string;
+    scheduled_date?: string;
+    scheduled_start?: string;
+
     consultation_type: string;
   } | null;
   patient?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
     phone: string;
     email: string | null;
   };
   doctor?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
   } | null;
   hospital?: {
     id: string;
@@ -89,7 +97,7 @@ export interface Refund {
   status: RefundStatus;
   refund_policy: 'full' | 'partial_75' | 'partial_50' | 'none';
   initiated_by: string;
-  razorpay_refund_id: string | null;
+  gateway_refund_id: string | null;
   processed_at: string | null;
   created_at: string;
 }
@@ -127,7 +135,7 @@ export interface SettlementWithDetails extends Settlement {
   } | null;
   doctor?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
   } | null;
   payments?: PaymentListItem[];
 }
@@ -231,7 +239,7 @@ export interface CreateOrderResponse {
   amount: number;
   currency: string;
   receipt: string;
-  key_id: string;
+  key_id?: string;
   notes: {
     appointment_id: string;
     patient_id: string;
@@ -242,16 +250,50 @@ export interface CreateOrderResponse {
     email?: string;
     contact?: string;
   };
+  provider?: 'razorpay' | 'cashfree';
+  payment_link?: string; // Cashfree redirect URL
+  payment_session_id?: string; // Cashfree payment session
+}
+
+/**
+ * Payment config response for client-side gateway initialization
+ */
+export interface PaymentConfigResponse {
+  provider: 'razorpay' | 'cashfree';
+  appointment_id: string;
+  amount: number;
+  currency: string;
+  // Razorpay-specific
+  key_id?: string;
+  order_id?: string;
+  // Cashfree-specific
+  payment_link?: string;
+  payment_session_id?: string;
+  // Common
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
 }
 
 export interface VerifyPaymentInput {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
+  gateway_order_id: string;
+  gateway_payment_id: string;
+  gateway_signature?: string;
+  provider: string;
+}
+
+/**
+ * Cashfree callback input (from redirect)
+ */
+export interface CashfreeCallbackInput {
+  orderId: string; // order_id from Cashfree
 }
 
 export interface ProcessRefundInput {
   payment_id: string;
+  refund_type?: 'full' | 'partial';
   amount?: number;
   reason: string;
   speed?: 'normal' | 'optimum';
@@ -333,3 +375,4 @@ export interface RazorpayWebhookEvent {
   };
   created_at: number;
 }
+

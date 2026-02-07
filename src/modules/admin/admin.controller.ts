@@ -1,21 +1,24 @@
 import { Request, Response } from 'express';
 import { adminService } from './admin.service.js';
-import { logger } from '../../common/logger.js';
-import { asyncHandler } from '../../middlewares/error.middleware.js';
-import { sendSuccess, sendPaginated, responses } from '../../common/response.js';
-import type { AuthenticatedRequest } from '../../types/request.js';
+import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { sendSuccess, sendPaginated } from '../../common/responses/index.js';
 import {
-  listUsersQuerySchema,
   userGrowthQuerySchema,
   verifyHospitalSchema,
   requestDocumentsSchema,
-  ticketFiltersSchema,
-  ticketUpdateSchema,
-  ticketReplySchema,
+  verifyDoctorSchema,
   settingUpdateSchema,
   reportTypeSchema,
   reportFiltersSchema,
 } from './admin.validator.js';
+
+/**
+ * Admin Controller - Refactored to match generic listing and trend paths
+ */
+
+// ============================================================================
+// DASHBOARD & STATS
+// ============================================================================
 
 export const getDashboard = asyncHandler(async (_req: Request, res: Response) => {
   const stats = await adminService.getDashboardStats();
@@ -27,8 +30,50 @@ export const getRevenue = asyncHandler(async (req: Request, res: Response) => {
   return sendSuccess(res, stats);
 });
 
+export const getUserGrowth = asyncHandler(async (req: Request, res: Response) => {
+  const q = userGrowthQuerySchema.parse(req.query);
+  const stats = await adminService.getUserGrowth(q);
+  return sendSuccess(res, stats);
+});
+
+// ============================================================================
+// LISTING & MANAGEMENT
+// ============================================================================
+
+export const listHospitals = asyncHandler(async (req: Request, res: Response) => {
+  const filters = req.query as unknown as Record<string, any>;
+  const result = await adminService.listHospitals(filters);
+  return sendPaginated(res, result.hospitals, result.meta);
+});
+
+export const updateHospitalStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  await adminService.updateHospitalStatus(id, is_active);
+  return sendSuccess(res, null, `Hospital ${is_active ? 'activated' : 'deactivated'} successfully`);
+});
+
+export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
+  const filters = req.query as unknown as Record<string, any>;
+  const result = await adminService.listDoctors(filters);
+  return sendPaginated(res, result.doctors, result.meta);
+});
+
+export const updateDoctorStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  await adminService.updateDoctorStatus(id, is_active);
+  return sendSuccess(res, null, `Doctor profile ${is_active ? 'activated' : 'disabled'} on platform`);
+});
+
 export const listUsers = asyncHandler(async (req: Request, res: Response) => {
-  const filters = listUsersQuerySchema.parse(req.query);
+  const filters = req.query as unknown as Record<string, any>;
+  const result = await adminService.listUsers(filters);
+  return sendPaginated(res, result.users, result.meta);
+});
+
+export const listPatients = asyncHandler(async (req: Request, res: Response) => {
+  const filters = { ...req.query, role: 'patient' } as any;
   const result = await adminService.listUsers(filters);
   return sendPaginated(res, result.users, result.meta);
 });
@@ -39,49 +84,30 @@ export const getUser = asyncHandler(async (req: Request, res: Response) => {
   return sendSuccess(res, user);
 });
 
-export const updateUser = asyncHandler(async (req: Request, res: Response) => {
+export const updateUserStatus = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
-  const data = req.body;
-  const user = await adminService.updateUser(id, data);
-  return sendSuccess(res, user, 'User updated');
+  const { is_active } = req.body;
+  await adminService.updateUserStatus(id, is_active);
+  return sendSuccess(res, null, `User account ${is_active ? 'activated' : 'deactivated'} successfully`);
 });
 
 export const deleteUser = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   await adminService.deleteUser(id);
-  return responses.deleted(res);
-});
-
-export const banUser = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { reason, duration } = req.body as { reason?: string; duration?: number };
-  const user = await adminService.banUser(id, reason, duration);
-  return sendSuccess(res, user, 'User banned');
-});
-
-export const unbanUser = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const user = await adminService.unbanUser(id);
-  return sendSuccess(res, user, 'User unbanned');
-});
-
-export const getUserGrowth = asyncHandler(async (req: Request, res: Response) => {
-  const q = userGrowthQuerySchema.parse(req.query);
-  const stats = await adminService.getUserGrowth(q);
-  return sendSuccess(res, stats);
-});
-
-export const listPendingHospitals = asyncHandler(async (req: Request, res: Response) => {
-  const filters = req.query as unknown as Record<string, any>;
-  const result = await adminService.listPendingHospitalVerifications(filters);
-  return sendPaginated(res, result.hospitals, result.meta);
+  return sendSuccess(res, null, 'User account deleted successfully');
 });
 
 export const verifyHospital = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const body = verifyHospitalSchema.parse(req.body);
-  const hospital = await adminService.verifyHospital(id, body);
-  return sendSuccess(res, hospital, 'Hospital verification updated');
+  const result = await adminService.verifyHospital(id, body);
+  return sendSuccess(res, result, 'Hospital verification status updated');
+});
+
+export const deleteHospital = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  await adminService.deleteHospital(id);
+  return sendSuccess(res, null, 'Hospital deleted successfully');
 });
 
 export const requestDocuments = asyncHandler(async (req: Request, res: Response) => {
@@ -91,38 +117,16 @@ export const requestDocuments = asyncHandler(async (req: Request, res: Response)
   return sendSuccess(res, result, 'Request sent');
 });
 
-export const listTickets = asyncHandler(async (req: Request, res: Response) => {
-  const filters = ticketFiltersSchema.parse(req.query);
-  const result = await adminService.listTickets(filters);
-  return sendPaginated(res, result.tickets, result.meta);
+export const verifyDoctor = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const body = verifyDoctorSchema.parse(req.body);
+  const doctor = await adminService.verifyDoctor(id, body);
+  return sendSuccess(res, doctor, 'Doctor verification updated');
 });
 
-export const getTicket = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const ticket = await adminService.getTicket(id);
-  return sendSuccess(res, ticket);
-});
-
-export const updateTicket = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const data = ticketUpdateSchema.parse(req.body);
-  const ticket = await adminService.updateTicket(id, data);
-  return sendSuccess(res, ticket, 'Ticket updated');
-});
-
-export const replyTicket = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const body = ticketReplySchema.parse(req.body);
-  const ticket = await adminService.replyTicket(id, body.message, body.attachments);
-  return sendSuccess(res, ticket, 'Reply added');
-});
-
-export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { resolution } = req.body as { resolution?: string };
-  const ticket = await adminService.closeTicket(id, resolution);
-  return sendSuccess(res, ticket, 'Ticket closed');
-});
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
 
 export const listAuditLogs = asyncHandler(async (req: Request, res: Response) => {
   const filters = req.query as unknown as Record<string, any>;
@@ -135,6 +139,10 @@ export const getAuditLog = asyncHandler(async (req: Request, res: Response) => {
   const log = await adminService.getAuditLog(id);
   return sendSuccess(res, log);
 });
+
+// ============================================================================
+// SETTINGS
+// ============================================================================
 
 export const getSettings = asyncHandler(async (_req: Request, res: Response) => {
   const settings = await adminService.getSettings();
@@ -160,6 +168,10 @@ export const resetSetting = asyncHandler(async (req: Request, res: Response) => 
   return sendSuccess(res, setting, 'Setting reset');
 });
 
+// ============================================================================
+// REPORTS
+// ============================================================================
+
 export const generateReport = asyncHandler(async (req: Request, res: Response) => {
   const type = reportTypeSchema.parse(req.params.type);
   const filters = reportFiltersSchema.parse(req.query);
@@ -170,4 +182,31 @@ export const generateReport = asyncHandler(async (req: Request, res: Response) =
 export const getScheduledReports = asyncHandler(async (_req: Request, res: Response) => {
   const reports = await adminService.getScheduledReports();
   return sendSuccess(res, reports);
+});
+
+// ============================================================================
+// ANALYTICS & TRENDS
+// ============================================================================
+
+export const getAnalyticsOverview = asyncHandler(async (_req: Request, res: Response) => {
+  const stats = await adminService.getAnalyticsOverview();
+  return sendSuccess(res, stats);
+});
+
+export const getAppointmentTrends = asyncHandler(async (req: Request, res: Response) => {
+  const period = (req.query.period as 'day' | 'week' | 'month') || 'week';
+  const trends = await adminService.getAppointmentTrends(period);
+  return sendSuccess(res, trends);
+});
+
+export const getRevenueTrends = asyncHandler(async (req: Request, res: Response) => {
+  const period = (req.query.period as 'day' | 'week' | 'month') || 'week';
+  const trends = await adminService.getRevenueTrends(period);
+  return sendSuccess(res, trends);
+});
+
+export const getUserTrends = asyncHandler(async (req: Request, res: Response) => {
+  const period = (req.query.period as 'day' | 'week' | 'month') || 'week';
+  const trends = await adminService.getUserTrends(period);
+  return sendSuccess(res, trends);
 });

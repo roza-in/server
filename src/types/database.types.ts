@@ -18,7 +18,20 @@ export type Rating = definitions['ratings'];
 export type Notification = definitions['notifications'];
 export type NotificationTemplate = definitions['notification_templates'];
 export type NotificationPreference = definitions['notification_preferences'];
-export type UserSession = definitions['user_sessions'];
+export interface UserSession {
+  id: string;
+  user_id: string;
+  refresh_token_hash: string;
+  device_id?: string | null;
+  device_type?: string | null;
+  device_name?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  is_active: boolean;
+  expires_at: string;
+  last_used_at: string;
+  created_at: string;
+}
 export type OtpCode = definitions['otp_codes'];
 export type PasswordResetToken = definitions['password_reset_tokens'];
 export type LoginHistory = definitions['login_history'];
@@ -50,21 +63,19 @@ export type ApiKey = definitions['api_keys'];
 export type ScheduledNotification = definitions['scheduled_notifications'];
 
 // Enum types extracted from schema
-export type UserRole = 'patient' | 'doctor' | 'hospital' | 'admin';
+export type UserRole = 'patient' | 'reception' | 'doctor' | 'hospital' | 'pharmacy' | 'admin';
 export type Gender = 'male' | 'female' | 'other';
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-' | 'unknown';
-export type AppointmentStatus = 
-  | 'pending_payment' 
-  | 'pending' 
-  | 'confirmed' 
-  | 'checked_in' 
-  | 'waiting' 
-  | 'in_progress' 
-  | 'completed' 
-  | 'cancelled' 
-  | 'no_show' 
+export type AppointmentStatus =
+  | 'pending_payment'
+  | 'confirmed'
+  | 'checked_in'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'no_show'
   | 'rescheduled';
-export type ConsultationType = 'in_person' | 'online' | 'phone' | 'home_visit';
+export type ConsultationType = 'in_person' | 'online' | 'walk_in';
 export type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | 'partially_refunded';
 export type PaymentMethod = 'upi' | 'card' | 'net_banking' | 'wallet' | 'emi' | 'cash';
 export type RefundType = 'full' | 'partial_75' | 'partial_50' | 'none' | 'doctor_cancelled' | 'technical_failure';
@@ -72,7 +83,7 @@ export type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type VerificationStatus = 'pending' | 'under_review' | 'verified' | 'rejected' | 'suspended';
 export type HospitalType = 'multi_specialty' | 'single_specialty' | 'nursing_home' | 'clinic' | 'diagnostic_center' | 'medical_college' | 'primary_health';
 export type SubscriptionTier = 'free' | 'standard' | 'premium' | 'enterprise';
-export type NotificationType = 
+export type NotificationType =
   | 'appointment_booked'
   | 'appointment_confirmed'
   | 'appointment_cancelled'
@@ -115,6 +126,242 @@ export type ConsultationStatus = 'scheduled' | 'waiting' | 'in_progress' | 'paus
 export type OTPPurpose = 'registration' | 'login' | 'password_reset' | 'phone_verification' | 'email_verification' | 'transaction';
 export type OTPChannel = 'sms' | 'whatsapp' | 'email';
 export type RelationshipType = 'self' | 'spouse' | 'parent' | 'child' | 'sibling' | 'other';
+
+// Medicine E-Commerce Enums
+export type MedicineCategory =
+  | 'tablet' | 'capsule' | 'syrup' | 'injection' | 'cream'
+  | 'ointment' | 'drops' | 'inhaler' | 'powder' | 'gel'
+  | 'spray' | 'patch' | 'suppository' | 'solution' | 'suspension' | 'other';
+
+export type MedicineSchedule =
+  | 'otc' | 'schedule_h' | 'schedule_h1' | 'schedule_x'
+  | 'ayurvedic' | 'homeopathic';
+
+export type PharmacyType =
+  | 'hospital_pharmacy' | 'retail_pharmacy' | 'chain_pharmacy' | 'online_pharmacy';
+
+export type MedicineOrderStatus =
+  | 'pending' | 'confirmed' | 'processing' | 'ready_for_pickup'
+  | 'out_for_delivery' | 'delivered' | 'cancelled' | 'returned' | 'failed';
+
+export type FulfillmentType =
+  | 'platform_delivery' | 'pharmacy_pickup' | 'self_arrange' | 'hospital_pharmacy';
+
+export type DeliveryPartnerStatus =
+  | 'active' | 'inactive' | 'suspended' | 'pending_verification';
+
+export type HospitalStaffRole =
+  | 'receptionist' | 'nurse' | 'admin' | 'billing';
+
+// Medicine E-Commerce Type Definitions (simplified - full types will be auto-generated)
+export interface Pharmacy {
+  id: string;
+  name: string;
+  slug?: string;
+  type: PharmacyType;
+  hospital_id?: string;
+  drug_license_number: string;
+  gst_number?: string;
+  phone: string;
+  email?: string;
+  address: string;
+  landmark?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  country?: string;
+  location?: { lat: number; lng: number };
+  working_hours?: Record<string, { open: string; close: string }>;
+  is_24x7: boolean;
+  home_delivery: boolean;
+  min_order_amount: number;
+  delivery_radius_km: number;
+  platform_commission_percent: number;
+  is_active: boolean;
+  verification_status: VerificationStatus;
+  rating: number;
+  total_orders: number;
+  owner_user_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryPartner {
+  id: string;
+  name: string;
+  code: string;
+  logo_url?: string;
+  api_endpoint?: string;
+  service_cities?: string[];
+  base_delivery_fee: number;
+  per_km_fee: number;
+  max_delivery_distance_km: number;
+  avg_pickup_time_minutes: number;
+  avg_delivery_time_minutes: number;
+  status: DeliveryPartnerStatus;
+  is_active: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Medicine {
+  id: string;
+  name: string;
+  generic_name?: string;
+  brand?: string;
+  manufacturer?: string;
+  category: MedicineCategory;
+  schedule: MedicineSchedule;
+  pack_size?: string;
+  unit?: string;
+  strength?: string;
+  mrp: number;
+  composition?: string;
+  uses?: string[];
+  side_effects?: string[];
+  is_prescription_required: boolean;
+  is_available: boolean;
+  is_discontinued: boolean;
+  image_url?: string;
+  stock_quantity: number;
+  is_in_stock: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PharmacyInventory {
+  id: string;
+  pharmacy_id: string;
+  medicine_id: string;
+  quantity_available: number;
+  quantity_reserved: number;
+  selling_price: number;
+  discount_percent: number;
+  batch_number?: string;
+  expiry_date?: string;
+  is_available: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MedicineOrder {
+  id: string;
+  order_number: string;
+  patient_id: string;
+  family_member_id?: string;
+  prescription_id?: string;
+  appointment_id?: string;
+  fulfillment_type: FulfillmentType;
+  pharmacy_id?: string;
+  delivery_address?: {
+    address: string;
+    city: string;
+    state: string;
+    pincode: string;
+    landmark?: string;
+    country?: string;
+    phone?: string;
+    lat?: number;
+    lng?: number;
+  };
+  subtotal: number;
+  discount_amount: number;
+  delivery_fee: number;
+  platform_fee: number;
+  gst_amount: number;
+  total_amount: number;
+  pharmacy_amount?: number;
+  platform_commission?: number;
+  status: MedicineOrderStatus;
+  prescription_verified: boolean;
+  delivery_partner_id?: string;
+  delivery_tracking_id?: string;
+  delivery_otp?: string;
+  payment_status: PaymentStatus;
+  payment_id?: string;
+  rating?: number;
+  rating_comment?: string;
+  idempotency_key?: string;
+  placed_at: string;
+  confirmed_at?: string;
+  dispatched_at?: string;
+  delivered_at?: string;
+  cancelled_at?: string;
+  cancellation_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MedicineOrderItem {
+  id: string;
+  order_id: string;
+  medicine_id: string;
+  inventory_id?: string;
+  prescription_item_index?: number;
+  quantity: number;
+  unit_price: number;
+  discount_percent: number;
+  subtotal: number;
+  medicine_name: string;
+  medicine_brand?: string;
+  dosage?: string;
+  is_substitute: boolean;
+  original_medicine_id?: string;
+  substitution_approved: boolean;
+  created_at: string;
+}
+
+export interface PharmacySettlement {
+  id: string;
+  pharmacy_id: string;
+  settlement_period_start: string;
+  settlement_period_end: string;
+  total_orders: number;
+  total_order_value: number;
+  total_platform_commission: number;
+  total_delivery_fees: number;
+  total_refunds: number;
+  net_settlement: number;
+  bank_reference?: string;
+  transfer_id?: string;
+  status: SettlementStatus;
+  invoice_number?: string;
+  invoice_url?: string;
+  calculated_at: string;
+  initiated_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HospitalStaff {
+  id: string;
+  hospital_id: string;
+  user_id: string;
+  staff_role: HospitalStaffRole;
+  can_book_appointments: boolean;
+  can_view_patient_records: boolean;
+  can_manage_schedules: boolean;
+  can_process_payments: boolean;
+  can_manage_inventory: boolean;
+  is_active: boolean;
+  joined_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryTracking {
+  id: string;
+  order_id: string;
+  status: string;
+  status_message?: string;
+  location?: { lat: number; lng: number };
+  event_time: string;
+  source: string;
+  created_at: string;
+}
 
 // Legacy type aliases for backward compatibility
 export type OTPCode = OtpCode;

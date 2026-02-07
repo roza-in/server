@@ -30,11 +30,39 @@ export const getConsultationSchema = z.object({
   }),
 });
 
+// Update consultation notes schema
+export const updateConsultationNotesSchema = z.object({
+  params: z.object({
+    consultationId: uuidSchema,
+  }),
+  body: z.object({
+    notes: z.string().max(5000),
+  }),
+});
+
+// Update consultation vitals schema
+export const updateConsultationVitalsSchema = z.object({
+  params: z.object({
+    consultationId: uuidSchema,
+  }),
+  body: z.object({
+    vitals: z.record(z.any()),
+  }),
+});
+
+// Get consultation status schema
+export const getConsultationStatusSchema = z.object({
+  params: z.object({
+    consultationId: uuidSchema,
+  }),
+});
+
 // List consultations schema
 export const listConsultationsSchema = z.object({
   query: z.object({
     doctorId: uuidSchema.optional(),
     patientId: uuidSchema.optional(),
+    appointmentId: uuidSchema.optional(),
     status: z.enum(['scheduled', 'waiting', 'in_progress', 'completed', 'cancelled']).optional(),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -76,6 +104,13 @@ export const getPrescriptionSchema = z.object({
   }),
 });
 
+// Join consultation schema
+export const joinConsultationSchema = z.object({
+  params: z.object({
+    consultationId: uuidSchema,
+  }),
+});
+
 // Get video token schema
 export const getVideoTokenSchema = z.object({
   params: z.object({
@@ -88,4 +123,8 @@ export type StartConsultationInput = z.infer<typeof startConsultationSchema>['bo
 export type EndConsultationInput = z.infer<typeof endConsultationSchema>;
 export type ListConsultationsInput = z.infer<typeof listConsultationsSchema>['query'];
 export type CreatePrescriptionInput = z.infer<typeof createPrescriptionSchema>['body'];
+export type UpdateConsultationNotesInput = z.infer<typeof updateConsultationNotesSchema>;
+export type UpdateConsultationVitalsInput = z.infer<typeof updateConsultationVitalsSchema>;
+export type JoinConsultationInput = z.infer<typeof joinConsultationSchema>;
+
 

@@ -1,13 +1,14 @@
-// @ts-nocheck
 import { Request, Response } from 'express';
 import { doctorService } from './doctor.service.js';
-import { getSupabaseAdmin } from '../../config/db.js';
-import { BadRequestError } from '../../common/errors.js';
-import { sendSuccess, sendPaginated } from '../../common/response.js';
-import { asyncHandler } from '../../middlewares/error.middleware.js';
+import { specializationRepository } from '../../database/repositories/specialization.repo.js';
+import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
+import { sendSuccess, sendPaginated, calculatePagination } from '../../common/responses/index.js';
+import { asyncHandler } from '@/middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
-import type { ListDoctorsInput, UpdateDoctorInput, GetDoctorAvailabilityInput, CreateDoctorInput } from './doctor.validator.js';
+import type { ListDoctorsInput, UpdateDoctorInput, CreateDoctorInput } from './doctor.validator.js';
+import { doctorPolicy } from './doctor.policy.js';
+import { ForbiddenError, NotFoundError } from '../../common/errors/index.js';
 
 /**
  * Doctor Controller - Handles HTTP requests for doctors
@@ -20,6 +21,11 @@ import type { ListDoctorsInput, UpdateDoctorInput, GetDoctorAvailabilityInput, C
 export const addDoctor = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as AuthenticatedRequest).user;
   const data = req.body as CreateDoctorInput;
+
+  if (!doctorPolicy.canCreate(user)) {
+    throw new ForbiddenError('You do not have permission to add doctors');
+  }
+
   const doctor = await doctorService.add(data as any, user.userId);
   return sendSuccess(res, doctor, MESSAGES.CREATED);
 });
@@ -50,38 +56,19 @@ export const getDoctorProfile = asyncHandler(async (req: Request, res: Response)
  */
 export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
   const filters = req.query as unknown as ListDoctorsInput;
-
-  // If request is authenticated and user is a hospital admin, restrict to that hospital
   const authUser = (req as AuthenticatedRequest).user;
-  if (authUser && authUser.role === 'hospital') {
-    try {
-      const supabase = getSupabaseAdmin();
-      const adminId = (authUser as any).userId || (authUser as any).id || (authUser as any).sub || null;
-      const { data: hosp } = await supabase
-        .from('hospitals')
-        .select('id')
-        .eq('admin_user_id', adminId)
-        .limit(1)
-        .single();
 
-      if (hosp && hosp.id) {
-        // override any incoming hospital filter to ensure hospital only sees their doctors
-        (filters as any).hospital_id = hosp.id;
-        // let service know hospital view should include unverified doctors
-        (filters as any).include_unverified = true;
-      }
-    } catch (e) {
-      // ignore — we'll proceed without hospital filter
+  // Filter scoped to hospital if requester is hospital admin
+  if (authUser && authUser.role === 'hospital') {
+    const hospital = await hospitalRepository.findByUserId(authUser.userId);
+    if (hospital) {
+      (filters as any).hospital_id = hospital.id;
+      (filters as any).include_unverified = true;
     }
   }
 
   const result = await doctorService.list(filters);
-  const pagination = {
-    page: Number(result.page) || 1,
-    limit: Number(result.limit) || 20,
-    total: Number(result.total) || 0,
-    totalPages: Number(result.totalPages) || 0,
-  };
+  const pagination = calculatePagination(result.total, result.page, result.limit);
   return sendPaginated(res, result.doctors, pagination);
 });
 
@@ -103,8 +90,14 @@ export const updateDoctor = asyncHandler(async (req: Request, res: Response) => 
   const { doctorId } = req.params;
   const user = (req as AuthenticatedRequest).user;
   const data = req.body as UpdateDoctorInput;
-  const doctor = await doctorService.update(doctorId, user.userId, user.role, data);
-  return sendSuccess(res, doctor, MESSAGES.UPDATED);
+
+  const doctor = await doctorService.getById(doctorId);
+  if (!doctorPolicy.canUpdate(user, doctor)) {
+    throw new ForbiddenError('You do not have permission to update this profile');
+  }
+
+  const updated = await doctorService.update(doctorId, user.userId, user.role, data);
+  return sendSuccess(res, updated, MESSAGES.UPDATED);
 });
 
 /**
@@ -115,8 +108,14 @@ export const updateDoctorStatus = asyncHandler(async (req: Request, res: Respons
   const { doctorId } = req.params;
   const user = (req as AuthenticatedRequest).user;
   const { status } = req.body;
-  const doctor = await doctorService.updateStatus(doctorId, user.userId, user.role, status);
-  return sendSuccess(res, doctor, MESSAGES.UPDATED);
+
+  const doctor = await doctorService.getById(doctorId);
+  if (!doctorPolicy.canDelete(user, doctor)) {
+    throw new ForbiddenError('You do not have permission to change this doctor status');
+  }
+
+  const updated = await doctorService.updateStatus(doctorId, user.userId, user.role, status);
+  return sendSuccess(res, updated, MESSAGES.UPDATED);
 });
 
 /**
@@ -125,21 +124,11 @@ export const updateDoctorStatus = asyncHandler(async (req: Request, res: Respons
  */
 export const getDoctorAvailability = asyncHandler(async (req: Request, res: Response) => {
   const { doctorId } = req.params;
-  const { date, startDate, endDate, consultationType } = req.query;
-
-  // Calculate days if date range provided
-  let days = 7;
-  if (startDate && endDate) {
-    const start = new Date(startDate as string);
-    const end = new Date(endDate as string);
-    days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-  }
+  const { days } = req.query;
 
   const availability = await doctorService.getAvailability(
     doctorId,
-    (date as string) || (startDate as string),
-    days,
-    consultationType as 'online' | 'in_person' | undefined
+    days ? Number(days) : 7
   );
 
   return sendSuccess(res, availability);
@@ -158,24 +147,22 @@ export const getDoctorStats = asyncHandler(async (req: Request, res: Response) =
 });
 
 /**
+ * Get doctor weekly schedule
+ * GET /api/v1/doctors/:doctorId/schedule
+ */
+export const getDoctorSchedule = asyncHandler(async (req: Request, res: Response) => {
+  const { doctorId } = req.params;
+  const schedule = await doctorService.getSchedules(doctorId);
+  return sendSuccess(res, schedule);
+});
+
+/**
  * Get list of specializations
  * GET /api/v1/doctors/specializations
  */
 export const getSpecializations = asyncHandler(async (req: Request, res: Response) => {
-  try {
-    const supabase = getSupabaseAdmin();
-    const { data, error } = await supabase
-      .from('specializations')
-      .select('id, name, display_name, icon_url')
-      .order('sort_order', { ascending: true });
-
-    if (error) {
-      throw new BadRequestError('Failed to fetch specializations');
-    }
-
-    return sendSuccess(res, data || []);
-  } catch (error) {
-    throw error;
-  }
+  const data = await specializationRepository.listAll();
+  return sendSuccess(res, data);
 });
+
 

@@ -45,3 +45,4 @@ export interface CreateTicketInput {
   priority?: string;
   attachments?: string[];
 }
+

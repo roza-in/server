@@ -1,212 +1,103 @@
 import { Request, Response, NextFunction } from 'express';
-import { ForbiddenError } from '../common/errors.js';
-import type { UserRole } from '../types/roles.js';
-import { hasRolePermission, hasPermission } from '../types/roles.js';
+import { ForbiddenError } from '../common/errors/ApiError.js';
+import type { UserRole } from '../types/database.types.js';
 
 /**
  * Role-based access control middleware
- * Checks if the authenticated user has one of the required roles
+ * 
+ * Usage:
+ *   // Check if user has one of the allowed roles
+ *   roleGuard('admin', 'hospital')
+ * 
+ *   // Check if user owns the resource (param matches user's ID or related ID)
+ *   roleGuard({ ownerParam: 'userId' })  // req.user.id === req.params.userId
+ *   roleGuard({ ownerParam: 'hospitalId' })  // req.user.hospitalId === req.params.hospitalId
+ *   roleGuard({ ownerParam: 'doctorId' })  // req.user.doctorId === req.params.doctorId
+ * 
+ *   // Allow either role OR ownership
+ *   roleGuard('admin', { ownerParam: 'userId' })
  */
-export const requireRole = (...allowedRoles: UserRole[]) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
 
-      const userRole = req.user.role;
+type RoleOrOwner = UserRole | string | { ownerParam: string };
 
-      // Check if user's role is in the allowed roles
-      if (!allowedRoles.includes(userRole)) {
-        throw new ForbiddenError(
-          `Access denied. Required role: ${allowedRoles.join(' or ')}`
-        );
-      }
+interface OwnerConfig {
+  ownerParam: string;
+}
 
-      next();
-    } catch (error) {
-      next(error);
+function isOwnerConfig(arg: RoleOrOwner): arg is OwnerConfig {
+  return typeof arg === 'object' && 'ownerParam' in arg;
+}
+
+export const roleGuard = (...allowedRolesOrOwners: RoleOrOwner[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+
+    if (!user) {
+      throw new ForbiddenError('Authentication required');
     }
-  };
-};
 
-/**
- * Permission-based access control middleware
- * Checks if the authenticated user has the required permission
- */
-export const requirePermission = (permission: string) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
+    const userRole = user.role as string;
+    const userId = user.id as string;
+    const userHospitalId = user.hospitalId as string | undefined;
+    const userDoctorId = user.doctorId as string | undefined;
 
-      if (!hasPermission(req.user.role, permission)) {
-        throw new ForbiddenError(`Access denied. Missing permission: ${permission}`);
-      }
+    // Check each allowed role or ownership condition
+    for (const allowed of allowedRolesOrOwners) {
+      // Check ownership condition
+      if (isOwnerConfig(allowed)) {
+        const paramValue = req.params[allowed.ownerParam];
 
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
+        if (!paramValue) {
+          continue; // Skip if param doesn't exist
+        }
 
-/**
- * Minimum role level middleware
- * Checks if the authenticated user has at least the required role level
- */
-export const requireMinRole = (minRole: UserRole) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
+        // Check various ownership matches
+        // 1. Direct user ID match
+        if (allowed.ownerParam === 'userId' && paramValue === userId) {
+          return next();
+        }
 
-      if (!hasRolePermission(req.user.role, minRole)) {
-        throw new ForbiddenError(`Access denied. Minimum required role: ${minRole}`);
-      }
+        // 2. Hospital ID match (for hospital admins)
+        if (allowed.ownerParam === 'hospitalId' && paramValue === userHospitalId) {
+          return next();
+        }
 
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
+        // 3. Doctor ID match (for doctors)
+        if (allowed.ownerParam === 'doctorId' && paramValue === userDoctorId) {
+          return next();
+        }
 
-/**
- * Hospital owner middleware
- * Ensures the user is a hospital and optionally verifies hospital ID
- */
-export const requireHospitalOwner = (hospitalIdParam?: string) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
-
-      if (req.user.role !== 'hospital') {
-        throw new ForbiddenError('Only hospital accounts can access this resource');
-      }
-
-      if (!req.user.hospitalId) {
-        throw new ForbiddenError('Hospital ID not found in token');
-      }
-
-      // If hospitalIdParam is provided, verify it matches the user's hospital
-      if (hospitalIdParam) {
-        const requestedHospitalId = req.params[hospitalIdParam];
-        if (requestedHospitalId && requestedHospitalId !== req.user.hospitalId) {
-          throw new ForbiddenError('You can only access your own hospital resources');
+        // 4. Generic check - param matches user's property of same name
+        const userPropValue = user[allowed.ownerParam];
+        if (userPropValue && paramValue === userPropValue) {
+          return next();
+        }
+      } else {
+        // Check role match
+        if (userRole === allowed) {
+          return next();
         }
       }
-
-      next();
-    } catch (error) {
-      next(error);
     }
+
+    // Handle admin bypass - admins can access everything
+    if (userRole === 'admin') {
+      return next();
+    }
+
+    throw new ForbiddenError('You do not have permission to perform this action');
   };
 };
 
 /**
- * Doctor owner middleware
- * Ensures the user is a doctor and optionally verifies doctor ID
+ * Convenience guards for common patterns
  */
-export const requireDoctorOwner = (doctorIdParam?: string) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
 
-      if (req.user.role !== 'doctor') {
-        throw new ForbiddenError('Only doctor accounts can access this resource');
-      }
+// Require admin role
+export const adminOnly = roleGuard('admin');
 
-      if (!req.user.doctorId) {
-        throw new ForbiddenError('Doctor ID not found in token');
-      }
+// Require ownership OR admin
+export const ownerOrAdmin = (ownerParam: string) => roleGuard('admin', { ownerParam });
 
-      // If doctorIdParam is provided, verify it matches the user's doctor ID
-      if (doctorIdParam) {
-        const requestedDoctorId = req.params[doctorIdParam];
-        if (requestedDoctorId && requestedDoctorId !== req.user.doctorId) {
-          throw new ForbiddenError('You can only access your own resources');
-        }
-      }
-
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
-
-/**
- * Patient owner middleware
- * Ensures the user is a patient or admin
- */
-export const requirePatientRole = () => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
-
-      if (req.user.role !== 'patient' && req.user.role !== 'admin') {
-        throw new ForbiddenError('Only patient accounts can access this resource');
-      }
-
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
-
-/**
- * Admin only middleware
- */
-export const requireAdmin = () => requireRole('admin');
-
-/**
- * Hospital or Admin middleware
- */
-export const requireHospitalOrAdmin = () => requireRole('hospital', 'admin');
-
-/**
- * Doctor, Hospital or Admin middleware
- */
-export const requireStaff = () => requireRole('doctor', 'hospital', 'admin');
-
-/**
- * Resource ownership middleware factory
- * Creates middleware that checks if user owns the resource based on user ID
- */
-export const requireOwnership = (userIdExtractor: (req: Request) => string | undefined) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    try {
-      if (!req.user) {
-        throw new ForbiddenError('Authentication required');
-      }
-
-      // Admin can access everything
-      if (req.user.role === 'admin') {
-        return next();
-      }
-
-      const resourceUserId = userIdExtractor(req);
-      if (!resourceUserId) {
-        throw new ForbiddenError('Cannot determine resource ownership');
-      }
-
-      if (req.user.userId !== resourceUserId) {
-        throw new ForbiddenError('You do not have permission to access this resource');
-      }
-
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
+// Hospital staff (hospital admin or associated doctor)
+export const hospitalStaff = roleGuard('admin', 'hospital', 'doctor');

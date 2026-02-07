@@ -76,6 +76,8 @@ declare global {
       user?: AuthUser;
       requestId?: string;
       startTime?: number;
+      idempotencyKey?: string;
+      auditAction?: string;
     }
   }
 }

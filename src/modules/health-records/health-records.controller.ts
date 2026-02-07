@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { healthRecordsService } from './health-records.service.js';
-import { sendSuccess, sendCreated, sendPaginated, sendNoContent, calculatePagination } from '../../common/response.js';
-import { asyncHandler } from '../../middlewares/error.middleware.js';
+import { sendSuccess, sendCreated, sendPaginated, sendNoContent, calculatePagination } from '../../common/responses/index.js';
+import { asyncHandler } from '@/middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type {
@@ -408,3 +408,5 @@ export const getFamilyHealthSummary = asyncHandler(async (req: Request, res: Res
   const summary = await healthRecordsService.getFamilyHealthSummary(user.userId, memberId);
   return sendSuccess(res, summary);
 });
+
+

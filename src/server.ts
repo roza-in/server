@@ -1,95 +1,105 @@
 import http from 'http';
-import { app } from './app.js';
-import { env } from './config/env.js';
-import { logger } from './common/logger.js';
+import app from './app.js';
+import { env, features } from './config/env.js';
+import { logger } from './config/logger.js';
+import { db } from './config/database.js';
+import { initSentry, captureException } from './config/sentry.js';
+import { initUpstashRedis } from './config/redis.js';
 
 /**
- * Create HTTP server
+ * ROZX Healthcare Platform - HTTP Server Start
  */
-const server = http.createServer(app);
+const startServer = async () => {
+  try {
+    // 1. Initialize Sentry (must be first for error tracking)
+    initSentry();
 
-/**
- * Normalize port
- */
-function normalizePort(val: string | number): number {
-  const port = typeof val === 'string' ? parseInt(val, 10) : val;
-  if (isNaN(port) || port < 0) {
-    return 3000;
-  }
-  return port;
-}
+    // 2. Initialize Redis (for rate limiting, caching)
+    if (features.upstashRedis) {
+      initUpstashRedis();
+    }
 
-const PORT = normalizePort(env.PORT);
-
-/**
- * Handle server errors
- */
-server.on('error', (error: NodeJS.ErrnoException) => {
-  if (error.syscall !== 'listen') {
-    throw error;
-  }
-
-  const bind = typeof PORT === 'string' ? `Pipe ${PORT}` : `Port ${PORT}`;
-
-  switch (error.code) {
-    case 'EACCES':
-      logger.error(`${bind} requires elevated privileges`);
+    // 3. Check Database Connection
+    const isDbConnected = await db.checkConnection();
+    if (!isDbConnected) {
+      logger.error('Failed to connect to database. Exiting...');
       process.exit(1);
-    case 'EADDRINUSE':
-      logger.error(`${bind} is already in use`);
-      process.exit(1);
-    default:
-      throw error;
-  }
-});
+    }
+    logger.info('Database connected successfully');
 
-/**
- * Handle server listening
- */
-server.on('listening', () => {
-  const addr = server.address();
-  const bind = typeof addr === 'string' ? `pipe ${addr}` : `port ${addr?.port}`;
-  logger.info(`Server listening on ${bind}`);
-  logger.info(`Environment: ${env.NODE_ENV}`);
-  logger.info(`API: http://localhost:${PORT}/api/v1`);
-  logger.info(`Health: http://localhost:${PORT}/health`);
-});
+    // 4. Configure Port
+    const PORT = env.PORT || 5000;
+    const server = http.createServer(app);
 
-/**
- * Graceful shutdown
- */
-function gracefulShutdown(signal: string) {
-  logger.info(`${signal} received, shutting down gracefully...`);
-  
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
-  });
+    // 5. Start Listening
+    server.listen(PORT, () => {
+      logger.info(`Server running in ${env.NODE_ENV} mode on port ${PORT}`);
+      logger.info(`API: http://localhost:${PORT}/api/v1`);
+      if (features.sentry) logger.info('Sentry error tracking enabled');
+      if (features.upstashRedis) logger.info('Upstash Redis rate limiting enabled');
+    });
 
-  // Force shutdown after 30 seconds
-  setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
+    // 6. Graceful Shutdown with connection draining
+    let isShuttingDown = false;
+
+    const shutdown = async (signal: string) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+
+      logger.info(`${signal} received. Shutting down gracefully...`);
+
+      // Stop accepting new connections
+      server.close(() => {
+        logger.info('HTTP server closed - no new connections');
+      });
+
+      // Wait for existing connections to drain (max 30s)
+      const drainTimeout = 30000;
+      const drainStart = Date.now();
+
+      await new Promise<void>((resolve) => {
+        const checkDrain = () => {
+          server.getConnections((err, count) => {
+            if (err || count === 0 || Date.now() - drainStart > drainTimeout) {
+              resolve();
+            } else {
+              logger.info(`Waiting for ${count} connections to close...`);
+              setTimeout(checkDrain, 1000);
+            }
+          });
+        };
+        checkDrain();
+      });
+
+      logger.info('Shutdown complete');
+      process.exit(0);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+
+    // 7. Handle uncaught exceptions and rejections
+    process.on('uncaughtException', (error) => {
+      logger.error('Uncaught Exception:', error);
+      captureException(error, { extra: { type: 'uncaughtException' } });
+      shutdown('UNCAUGHT_EXCEPTION');
+    });
+
+    process.on('unhandledRejection', (reason) => {
+      logger.error('Unhandled Rejection:', reason);
+      if (reason instanceof Error) {
+        captureException(reason, { extra: { type: 'unhandledRejection' } });
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    if (error instanceof Error) {
+      captureException(error, { extra: { type: 'startupFailure' } });
+    }
     process.exit(1);
-  }, 30000);
-}
+  }
+};
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+startServer();
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-/**
- * Start server
- */
-server.listen(PORT);
-
-export { server };

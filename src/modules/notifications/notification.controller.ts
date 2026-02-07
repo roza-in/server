@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { Request, Response } from 'express';
 import { notificationService } from './notification.service.js';
-import { sendSuccess, sendCreated, sendPaginated } from '../../common/response.js';
-import { asyncHandler } from '../../middlewares/error.middleware.js';
+import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
+import { asyncHandler } from '@/middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type {
@@ -138,4 +138,6 @@ export const unregisterDevice = asyncHandler(async (req: Request, res: Response)
   await notificationService.unregisterDevice(deviceId, user.userId);
   return sendSuccess(res, null, 'Device unregistered');
 });
+
+
 

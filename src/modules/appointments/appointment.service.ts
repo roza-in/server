@@ -1,12 +1,20 @@
-import { getSupabaseAdmin } from '../../config/db.js';
-import { logger } from '../../common/logger.js';
-import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors.js';
+import { logger } from '../../config/logger.js';
+import { logger } from '../../config/logger.js';
+import { formatToIST, formatAppointmentDate } from '../../common/utils/date.js';
+import { notificationService } from '../../integrations/notification/notification.service.js';
+import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';
+import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import { PLATFORM_FEES, APPOINTMENT_DURATIONS } from '../../config/constants.js';
-import type {
-  AppointmentStatus,
-  ConsultationType,
-  PaymentStatus,
-} from '../../types/database.types.js';
+import { APPOINTMENT_TRANSITIONS } from './appointment.types.js';
+import { appointmentRepository } from '../../database/repositories/appointment.repo.js';
+import { doctorRepository } from '../../database/repositories/doctor.repo.js';
+import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
+import { familyMemberRepository } from '../../database/repositories/family-member.repo.js';
+import { userRepository } from '../../database/repositories/user.repo.js';
+import { appointmentPolicy } from './appointment.policy.js';
+import { paymentService } from '../payments/payment.service.js';
+import type { AppointmentStatus, ConsultationType } from '../../types/database.types.js';
+import type { CreateOrderResponse } from '../payments/payment.types.js';
 import type {
   AppointmentWithDetails,
   AppointmentListItem,
@@ -14,27 +22,13 @@ import type {
   AppointmentListResponse,
   AppointmentStats,
   BookAppointmentInput,
-  RescheduleInput,
-  CancelInput,
-  ConsultationDetails,
-  StartConsultationInput,
-  EndConsultationInput,
-  CreatePrescriptionInput,
-  AvailableSlot,
-  APPOINTMENT_TRANSITIONS,
 } from './appointment.types.js';
 
 /**
- * Appointment Service - Production-ready appointment management
- * Features: Slot-based booking, state machine, consultations, prescriptions
+ * Appointment Service - Business logic for appointment management
  */
 class AppointmentService {
   private log = logger.child('AppointmentService');
-  private supabase = getSupabaseAdmin();
-
-  // ============================================================================
-  // Booking Operations
-  // ============================================================================
 
   /**
    * Book a new appointment
@@ -42,129 +36,141 @@ class AppointmentService {
   async bookAppointment(
     patientId: string,
     input: BookAppointmentInput
-  ): Promise<{ appointment: AppointmentWithDetails; paymentRequired: boolean; amount: number }> {
+  ): Promise<{
+    appointment: AppointmentWithDetails;
+    requiresPayment: boolean;
+    amount: number;
+    paymentOrder?: CreateOrderResponse;
+  }> {
     const {
-      doctor_id,
-      hospital_id,
-      family_member_id,
-      appointment_date,
-      start_time,
-      end_time,
-      consultation_type,
+      doctorId,
+      hospitalId,
+      familyMemberId,
+      appointmentDate,
+      startTime,
+      endTime,
+      consultationType,
       symptoms,
-      patient_notes,
+      notes,
     } = input;
 
     // Get doctor with schedule validation
-    const { data: doctor, error: doctorError } = await this.supabase
-      .from('doctors')
-      .select(`
-        id, user_id, status, verification_status,
-        consultation_types, consultation_duration,
-        fee_in_person, fee_video, fee_chat,
-        hospital_id,
-        users!inner(full_name)
-      `)
-      .eq('id', doctor_id)
-      .single();
+    const doctor = await doctorRepository.findWithRelations(doctorId);
 
-    if (doctorError || !doctor) {
+    if (!doctor) {
       throw new NotFoundError('Doctor');
     }
 
-    if (doctor.status !== 'active' || doctor.verification_status !== 'verified') {
+    if (!doctor.is_active || doctor.verification_status !== 'verified') {
       throw new BadRequestError('Doctor is not available for appointments');
     }
 
     // Validate consultation type
-    const supportedTypes = doctor.consultation_types as ConsultationType[];
-    if (!supportedTypes.includes(consultation_type)) {
-      throw new BadRequestError(`Doctor does not offer ${consultation_type} consultations`);
+    const supportedTypes = doctor.consultation_types as ConsultationType[] || [];
+    if (!supportedTypes.includes(consultationType)) {
+      throw new BadRequestError(`Doctor does not offer ${consultationType} consultations`);
     }
 
     // Validate family member if provided
-    if (family_member_id) {
-      const { data: familyMember, error: fmError } = await this.supabase
-        .from('family_members')
-        .select('id, user_id')
-        .eq('id', family_member_id)
-        .eq('user_id', patientId)
-        .single();
-
-      if (fmError || !familyMember) {
+    if (familyMemberId) {
+      const familyMember = await familyMemberRepository.findByUserAndId(patientId, familyMemberId);
+      if (!familyMember) {
         throw new BadRequestError('Invalid family member');
       }
     }
 
-    // Calculate end time if not provided
+    // Calculate end time
     const duration = doctor.consultation_duration || APPOINTMENT_DURATIONS.DEFAULT;
-    const calculatedEndTime = end_time || this.calculateEndTime(start_time, duration);
+    const calculatedEndTime = endTime || this.calculateEndTime(startTime, duration);
 
-    // Check slot availability
-    const isAvailable = await this.checkSlotAvailability(
-      doctor_id,
-      hospital_id || doctor.hospital_id,
-      appointment_date,
-      start_time,
-      calculatedEndTime,
-      consultation_type
+    // Check for duplicate booking (patient already has appointment with this doctor on this day)
+    const hasExisting = await appointmentRepository.hasExistingAppointment(
+      patientId,
+      doctorId,
+      appointmentDate
+    );
+    if (hasExisting) {
+      throw new BadRequestError('You already have an appointment with this doctor on this date');
+    }
+
+    // Check slot availability with atomic locking
+    const hospitalIdToUse = hospitalId || doctor.hospital_id;
+    const availability = await appointmentRepository.checkSlotAvailability(
+      doctorId,
+      hospitalIdToUse,
+      appointmentDate,
+      startTime,
+      consultationType,
+      patientId
     );
 
-    if (!isAvailable) {
-      throw new BadRequestError('Selected time slot is not available');
+    if (!availability.available) {
+      throw new BadRequestError(availability.reason || 'Selected time slot is not available');
     }
 
     // Calculate fees
-    const consultationFee = this.getConsultationFee(doctor, consultation_type);
-    const platformFee = Math.round(consultationFee * (PLATFORM_FEES.PERCENTAGE / 100));
-    const totalAmount = consultationFee + platformFee;
-
-    // Generate booking ID
-    const bookingId = this.generateBookingId();
+    const consultationFee = this.getConsultationFee(doctor, consultationType);
+    // User Update: No platform fee charged to patient
+    const platformFee = 0;
+    const totalAmount = consultationFee;
 
     // Create appointment
-    const { data: appointment, error: createError } = await this.supabase
-      .from('appointments')
-      .insert({
-        booking_id: bookingId,
-        patient_id: patientId,
-        doctor_id: doctor_id,
-        hospital_id: hospital_id || doctor.hospital_id,
-        family_member_id: family_member_id || null,
-        appointment_date: appointment_date,
-        start_time: start_time,
-        end_time: calculatedEndTime,
-        consultation_type: consultation_type,
-        status: 'pending_payment',
-        symptoms: symptoms || null,
-        patient_notes: patient_notes || null,
-        consultation_fee: consultationFee,
-        platform_fee: platformFee,
-        total_amount: totalAmount,
-        payment_status: 'pending',
-      })
-      .select()
-      .single();
+    const appointment = await appointmentRepository.create({
+      patient_id: patientId,
+      doctor_id: doctorId,
+      hospital_id: hospitalId || doctor.hospital_id,
+      family_member_id: familyMemberId || null,
+      slot_id: availability.slotId || null,
+      scheduled_date: appointmentDate,
+      scheduled_start: `${appointmentDate}T${startTime}:00+05:30`,
+      scheduled_end: `${appointmentDate}T${calculatedEndTime}:00+05:30`,
+      consultation_type: this.mapConsultationType(consultationType),
+      status: 'pending_payment',
+      patient_notes: notes || null,
+      consultation_fee: consultationFee,
+      platform_fee: platformFee,
+      total_amount: totalAmount,
+    } as any);
 
-    if (createError) {
-      this.log.error('Failed to create appointment', createError);
+    if (!appointment) {
       throw new BadRequestError('Failed to book appointment');
     }
 
     // Get full appointment details
     const fullAppointment = await this.getById(appointment.id);
 
-    this.log.info(`Appointment booked: ${bookingId}`, {
+    this.log.info(`Appointment booked: ${fullAppointment.appointment_number}`, {
       appointmentId: appointment.id,
       patientId,
-      doctorId: doctor_id,
-      date: appointment_date,
+      doctorId: doctorId,
+      date: appointmentDate,
     });
 
+    // Generate payment order if required
+    let paymentOrder: CreateOrderResponse | undefined;
+    if (totalAmount > 0) {
+      try {
+        paymentOrder = await paymentService.createOrder(patientId, {
+          appointment_id: appointment.id
+        });
+      } catch (error) {
+        this.log.error(`Failed to create payment order for appointment ${appointment.id}`, error);
+        // We still return the appointment, client can retry payment order creation
+      }
+    } else {
+      // Free appointment - auto confirm
+      await this.updateStatus(appointment.id, 'confirmed', 'system', 'admin');
+
+      // Trigger Notification
+      const fullAppt = await this.getById(appointment.id);
+      await this.sendConfirmationNotification(fullAppt);
+    }
+
     return {
-      appointment: fullAppointment,
-      paymentRequired: true,
+      appointment: await this.getById(appointment.id),
+      requiresPayment: totalAmount > 0,
       amount: totalAmount,
+      paymentOrder,
     };
   }
 
@@ -172,94 +178,28 @@ class AppointmentService {
    * Confirm appointment after payment
    */
   async confirmPayment(appointmentId: string, paymentId: string): Promise<AppointmentWithDetails> {
-    const { data: appointment, error } = await this.supabase
-      .from('appointments')
-      .update({
-        status: 'confirmed',
-        payment_status: 'completed',
-        payment_id: paymentId,
-        paid_at: new Date().toISOString(),
-      })
-      .eq('id', appointmentId)
-      .eq('status', 'pending_payment')
-      .select()
-      .single();
+    const appointment = await appointmentRepository.update(appointmentId, {
+      status: 'confirmed',
+    });
 
-    if (error || !appointment) {
+    if (!appointment) {
       throw new BadRequestError('Failed to confirm appointment payment');
     }
 
-    return this.getById(appointmentId);
-  }
+    // TODO: Update payment record with paymentId and paid_at
 
-  // ============================================================================
-  // Read Operations
-  // ============================================================================
+    const fullAppt = await this.getById(appointmentId);
+    await this.sendConfirmationNotification(fullAppt);
+
+    return fullAppt;
+  }
 
   /**
    * Get appointment by ID with all details
    */
   async getById(appointmentId: string): Promise<AppointmentWithDetails> {
-    const { data, error } = await this.supabase
-      .from('appointments')
-      .select(`
-        *,
-        patient:users!appointments_patient_id_fkey(
-          id, full_name, phone, email, avatar_url, gender, date_of_birth
-        ),
-        family_member:family_members(
-          id, full_name, relationship, gender, date_of_birth
-        ),
-        doctor:doctors!inner(
-          id, user_id, title,
-          users!inner(full_name, avatar_url),
-          specializations(name)
-        ),
-        hospital:hospitals(
-          id, name, slug, address, contact_phone
-        ),
-        consultation:consultations(*),
-        prescription:prescriptions(*)
-      `)
-      .eq('id', appointmentId)
-      .single();
-
-    if (error || !data) {
-      throw new NotFoundError('Appointment');
-    }
-
-    return this.transformAppointment(data);
-  }
-
-  /**
-   * Get appointment by booking ID
-   */
-  async getByBookingId(bookingId: string): Promise<AppointmentWithDetails> {
-    const { data, error } = await this.supabase
-      .from('appointments')
-      .select(`
-        *,
-        patient:users!appointments_patient_id_fkey(
-          id, full_name, phone, email, avatar_url, gender, date_of_birth
-        ),
-        family_member:family_members(
-          id, full_name, relationship, gender, date_of_birth
-        ),
-        doctor:doctors!inner(
-          id, user_id, title,
-          users!inner(full_name, avatar_url),
-          specializations(name)
-        ),
-        hospital:hospitals(
-          id, name, slug, address, contact_phone
-        ),
-        consultation:consultations(*),
-        prescription:prescriptions(*)
-      `)
-      .eq('booking_id', bookingId)
-      .single();
-
-    if (error || !data) {
+    const data = await appointmentRepository.findByIdWithRelations(appointmentId);
+    if (!data) {
       throw new NotFoundError('Appointment');
     }
 
@@ -270,95 +210,47 @@ class AppointmentService {
    * List appointments with filters
    */
   async list(filters: AppointmentFilters): Promise<AppointmentListResponse> {
-    const {
-      patient_id,
-      doctor_id,
-      hospital_id,
-      status,
-      consultation_type,
-      date_from,
-      date_to,
-      search,
-      page = 1,
-      limit = 20,
-      sort_by = 'date',
-      sort_order = 'desc',
-    } = filters;
+    const page = filters.page || 1;
+    const limit = filters.limit || 20;
+    const result = await appointmentRepository.findMany(filters, page, limit);
+    const appointments = result.data;
+    const total = result.total;
 
-    let query = this.supabase
-      .from('appointments')
-      .select(`
-        id, booking_id, appointment_date, start_time, end_time,
-        consultation_type, status, symptoms, total_amount, payment_status,
-        patient:users!appointments_patient_id_fkey(full_name, avatar_url),
-        doctor:doctors!inner(users!inner(full_name, avatar_url)),
-        hospital:hospitals(name)
-      `, { count: 'exact' });
-
-    // Apply filters
-    if (patient_id) query = query.eq('patient_id', patient_id);
-    if (doctor_id) query = query.eq('doctor_id', doctor_id);
-    if (hospital_id) query = query.eq('hospital_id', hospital_id);
-    if (consultation_type) query = query.eq('consultation_type', consultation_type);
-    if (date_from) query = query.gte('appointment_date', date_from);
-    if (date_to) query = query.lte('appointment_date', date_to);
-
-    if (status) {
-      if (Array.isArray(status)) {
-        query = query.in('status', status);
-      } else {
-        query = query.eq('status', status);
-      }
-    }
-
-    // Apply sorting
-    const sortColumn = sort_by === 'date' ? 'appointment_date' : sort_by;
-    query = query.order(sortColumn, { ascending: sort_order === 'asc' });
-    query = query.order('start_time', { ascending: true });
-
-    // Apply pagination
-    const from = (page - 1) * limit;
-    query = query.range(from, from + limit - 1);
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      this.log.error('Failed to list appointments', error);
-      throw new BadRequestError('Failed to fetch appointments');
-    }
-
-    const total = count || 0;
-    const appointments: AppointmentListItem[] = (data || []).map((a: any) => ({
+    const items: AppointmentListItem[] = (appointments || []).map((a: any) => ({
       id: a.id,
-      booking_id: a.booking_id,
-      appointment_date: a.appointment_date,
-      start_time: a.start_time,
-      end_time: a.end_time,
-      consultation_type: a.consultation_type,
+      bookingId: a.appointment_number,
+      appointmentDate: a.scheduled_date,
+      startTime: a.scheduled_start?.includes('T') ? a.scheduled_start.split('T')[1].substring(0, 5) : a.scheduled_start,
+      endTime: a.scheduled_end?.includes('T') ? a.scheduled_end.split('T')[1].substring(0, 5) : a.scheduled_end,
+      consultationType: a.consultation_type,
       status: a.status,
-      patient_name: a.patient?.full_name || null,
-      patient_avatar: a.patient?.avatar_url || null,
-      doctor_name: a.doctor?.users?.full_name || null,
-      doctor_avatar: a.doctor?.users?.avatar_url || null,
-      hospital_name: a.hospital?.name || null,
+      patientName: a.patient?.name || null,
+      patientAvatar: a.patient?.avatar_url || null,
+      doctorName: a.doctors?.users?.name || a.doctor?.users?.name || null,
+      doctorAvatar: a.doctors?.users?.avatar_url || a.doctor?.users?.avatar_url || null,
+      doctorSpecialization: a.doctors?.specializations?.name || a.doctor?.specializations?.name || null,
+      hospitalName: a.hospitals?.name || a.hospital?.name || null,
+      hospitalAddress: a.hospitals?.address || a.hospital?.address || null,
+      hospitalCity: a.hospitals?.city || a.hospital?.city || null,
+      hospitalState: a.hospitals?.state || a.hospital?.state || null,
       symptoms: a.symptoms,
-      payment_status: a.payment_status,
-      total_amount: a.total_amount,
+      paymentStatus: a.payment_status,
+      totalAmount: a.total_amount,
+      isFollowup: a.is_followup || false,
     }));
 
+    const totalPages = Math.ceil(total / limit);
+    const hasMore = page * limit < total;
+
     return {
-      appointments,
+      appointments: items,
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
-      hasMore: page * limit < total,
+      totalPages,
+      hasMore,
     };
   }
-
-  // ============================================================================
-  // Status Transitions (State Machine)
-  // ============================================================================
 
   /**
    * Update appointment status with state machine validation
@@ -367,13 +259,13 @@ class AppointmentService {
     appointmentId: string,
     newStatus: AppointmentStatus,
     userId: string,
-    role: 'patient' | 'doctor' | 'hospital' | 'admin',
+    role: any,
     reason?: string
   ): Promise<AppointmentWithDetails> {
     const appointment = await this.getById(appointmentId);
 
-    // Check access permission
-    if (!this.hasAccess(appointment, userId, role)) {
+    // Check access permission via Policy
+    if (!appointmentPolicy.canUpdate({ userId, role } as any, appointment)) {
       throw new ForbiddenError('You do not have permission to update this appointment');
     }
 
@@ -418,16 +310,13 @@ class AppointmentService {
         break;
     }
 
-    const { error } = await this.supabase
-      .from('appointments')
-      .update(updateData)
-      .eq('id', appointmentId);
+    const updated = await appointmentRepository.update(appointmentId, updateData);
 
-    if (error) {
+    if (!updated) {
       throw new BadRequestError('Failed to update appointment status');
     }
 
-    this.log.info(`Appointment status updated: ${appointment.booking_id}`, {
+    this.log.info(`Appointment status updated: ${appointment.appointment_number}`, {
       appointmentId,
       from: appointment.status,
       to: newStatus,
@@ -438,47 +327,13 @@ class AppointmentService {
   }
 
   /**
-   * Check-in patient
-   */
-  async checkIn(
-    appointmentId: string,
-    userId: string,
-    role: 'patient' | 'doctor' | 'hospital'
-  ): Promise<AppointmentWithDetails> {
-    return this.updateStatus(appointmentId, 'checked_in', userId, role);
-  }
-
-  /**
-   * Cancel appointment
-   */
-  async cancel(
-    appointmentId: string,
-    userId: string,
-    role: 'patient' | 'doctor' | 'hospital' | 'admin',
-    input: CancelInput
-  ): Promise<{ appointment: AppointmentWithDetails; refundAmount: number }> {
-    const appointment = await this.updateStatus(
-      appointmentId,
-      'cancelled',
-      userId,
-      role,
-      input.reason
-    );
-
-    // Calculate refund based on cancellation policy
-    const refundAmount = this.calculateRefund(appointment);
-
-    return { appointment, refundAmount };
-  }
-
-  /**
    * Reschedule appointment
    */
   async reschedule(
     appointmentId: string,
     userId: string,
-    role: 'patient' | 'doctor' | 'hospital',
-    input: RescheduleInput
+    role: any,
+    input: { newDate: string; newStartTime: string; reason?: string }
   ): Promise<AppointmentWithDetails> {
     const appointment = await this.getById(appointmentId);
 
@@ -487,270 +342,102 @@ class AppointmentService {
       throw new BadRequestError('Cannot reschedule appointment in current status');
     }
 
-    // Check access
-    if (!this.hasAccess(appointment, userId, role)) {
+    // Check access via Policy
+    if (!appointmentPolicy.canUpdate({ userId, role } as any, appointment)) {
       throw new ForbiddenError('You do not have permission to reschedule this appointment');
     }
 
     // Calculate new end time
     const duration = this.calculateDuration(appointment.start_time, appointment.end_time);
-    const newEndTime = this.calculateEndTime(input.new_start_time, duration);
+    const newEndTime = this.calculateEndTime(input.newStartTime, duration);
 
     // Check new slot availability
-    const isAvailable = await this.checkSlotAvailability(
-      appointment.doctor?.id || '',
-      appointment.hospital?.id || null,
-      input.new_date,
-      input.new_start_time,
-      newEndTime,
-      appointment.consultation_type
+    const isBooked = await appointmentRepository.isSlotBooked(
+      appointment.doctor_id,
+      input.newDate,
+      input.newStartTime
     );
 
-    if (!isAvailable) {
+    if (isBooked) {
       throw new BadRequestError('New time slot is not available');
     }
 
     // Update appointment
-    const { error } = await this.supabase
-      .from('appointments')
-      .update({
-        status: 'rescheduled',
-        appointment_date: input.new_date,
-        start_time: input.new_start_time,
-        end_time: newEndTime,
-        rescheduled_from: `${appointment.appointment_date} ${appointment.start_time}`,
-        reschedule_reason: input.reason || null,
-        rescheduled_at: new Date().toISOString(),
-      })
-      .eq('id', appointmentId);
+    const updated = await appointmentRepository.update(appointmentId, {
+      status: 'rescheduled',
+      scheduled_date: input.newDate,
+      scheduled_start: `${input.newDate}T${input.newStartTime}:00+05:30`,
+      scheduled_end: `${input.newDate}T${newEndTime}:00+05:30`,
+      reason: input.reason || null,
+      updated_at: new Date().toISOString(),
+      // rescheduled_from is a UUID reference to appointments(id), skipping string date
+    } as any);
 
-    if (error) {
+    if (!updated) {
       throw new BadRequestError('Failed to reschedule appointment');
     }
 
-    this.log.info(`Appointment rescheduled: ${appointment.booking_id}`, {
+    this.log.info(`Appointment rescheduled: ${appointment.appointment_number}`, {
       appointmentId,
       oldDate: appointment.appointment_date,
-      newDate: input.new_date,
+      newDate: input.newDate,
     });
 
     return this.getById(appointmentId);
   }
 
   /**
-   * Mark as no-show
-   */
-  async markNoShow(
-    appointmentId: string,
-    userId: string,
-    role: 'doctor' | 'hospital' | 'admin'
-  ): Promise<AppointmentWithDetails> {
-    return this.updateStatus(appointmentId, 'no_show', userId, role);
-  }
-
-  // ============================================================================
-  // Consultation Operations
-  // ============================================================================
-
-  /**
-   * Start consultation
-   */
-  async startConsultation(
-    userId: string,
-    input: StartConsultationInput
-  ): Promise<ConsultationDetails> {
-    const appointment = await this.getById(input.appointment_id);
-
-    // Validate doctor access
-    if (appointment.doctor?.user_id !== userId) {
-      throw new ForbiddenError('Only the assigned doctor can start the consultation');
-    }
-
-    // Update appointment status
-    await this.updateStatus(input.appointment_id, 'in_progress', userId, 'doctor');
-
-    // Create consultation record
-    const { data: consultation, error } = await this.supabase
-      .from('consultations')
-      .insert({
-        appointment_id: input.appointment_id,
-        doctor_id: appointment.doctor.id,
-        patient_id: appointment.patient?.id,
-        hospital_id: appointment.hospital?.id,
-        consultation_type: appointment.consultation_type,
-        status: 'in_progress',
-        started_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new BadRequestError('Failed to start consultation');
-    }
-
-    this.log.info(`Consultation started: ${appointment.booking_id}`);
-
-    return {
-      ...consultation,
-      appointment,
-    };
-  }
-
-  /**
-   * End consultation
-   */
-  async endConsultation(
-    userId: string,
-    input: EndConsultationInput
-  ): Promise<AppointmentWithDetails> {
-    const appointment = await this.getById(input.appointment_id);
-
-    // Validate doctor access
-    if (appointment.doctor?.user_id !== userId) {
-      throw new ForbiddenError('Only the assigned doctor can end the consultation');
-    }
-
-    // Update consultation
-    const { error: consultationError } = await this.supabase
-      .from('consultations')
-      .update({
-        status: 'completed',
-        ended_at: new Date().toISOString(),
-        consultation_notes: input.consultation_notes || null,
-        diagnosis: input.diagnosis || null,
-      })
-      .eq('appointment_id', input.appointment_id);
-
-    if (consultationError) {
-      this.log.error('Failed to update consultation', consultationError);
-    }
-
-    // Update appointment status
-    await this.updateStatus(input.appointment_id, 'completed', userId, 'doctor');
-
-    this.log.info(`Consultation completed: ${appointment.booking_id}`);
-
-    return this.getById(input.appointment_id);
-  }
-
-  // ============================================================================
-  // Prescription Operations
-  // ============================================================================
-
-  /**
-   * Create prescription
-   */
-  async createPrescription(
-    userId: string,
-    input: CreatePrescriptionInput
-  ): Promise<any> {
-    const appointment = await this.getById(input.appointment_id);
-
-    // Validate doctor access
-    if (appointment.doctor?.user_id !== userId) {
-      throw new ForbiddenError('Only the assigned doctor can create prescriptions');
-    }
-
-    // Create prescription
-    const { data: prescription, error } = await this.supabase
-      .from('prescriptions')
-      .insert({
-        appointment_id: input.appointment_id,
-        doctor_id: appointment.doctor.id,
-        patient_id: appointment.patient?.id,
-        hospital_id: appointment.hospital?.id,
-        diagnosis: input.diagnosis || null,
-        medications: JSON.stringify(input.medications),
-        lab_tests: input.lab_tests ? JSON.stringify(input.lab_tests) : null,
-        radiology_tests: input.radiology_tests || null,
-        advice: input.advice || null,
-        follow_up_date: input.follow_up_date || null,
-        follow_up_instructions: input.follow_up_instructions || null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new BadRequestError('Failed to create prescription');
-    }
-
-    this.log.info(`Prescription created for appointment: ${appointment.booking_id}`);
-
-    return prescription;
-  }
-
-  // ============================================================================
-  // Stats Operations
-  // ============================================================================
-
-  /**
-   * Get appointment stats for a user
+   * Get appointment stats
    */
   async getStats(
     userId: string,
     role: 'patient' | 'doctor' | 'hospital'
   ): Promise<AppointmentStats> {
-    let query = this.supabase.from('appointments').select('status', { count: 'exact' });
+    let filters: AppointmentFilters = {};
 
     if (role === 'patient') {
-      query = query.eq('patient_id', userId);
+      filters.patient_id = userId;
     } else if (role === 'doctor') {
-      const { data: doctor } = await this.supabase
-        .from('doctors')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
+      const doctor = await doctorRepository.findByUserId(userId);
       if (doctor) {
-        query = query.eq('doctor_id', doctor.id);
+        filters.doctor_id = doctor.id;
       }
     } else if (role === 'hospital') {
-      const { data: hospital } = await this.supabase
-        .from('hospitals')
-        .select('id')
-        .eq('admin_user_id', userId)
-        .single();
+      const hospital = await hospitalRepository.findByUserId(userId);
       if (hospital) {
-        query = query.eq('hospital_id', hospital.id);
+        filters.hospital_id = hospital.id;
       }
     }
 
-    const { data: appointments } = await query;
+    const { data } = await appointmentRepository.findMany({
+      ...filters,
+      limit: 1000 // Get enough for stats
+    });
 
+    const appointments = (data || []).map(a => this.transformAppointment(a));
     const today = new Date().toISOString().split('T')[0];
     const statusCounts: Record<string, number> = {};
 
-    (appointments || []).forEach((a: any) => {
+    appointments.forEach((a: any) => {
       statusCounts[a.status] = (statusCounts[a.status] || 0) + 1;
     });
 
-    // Get today's count
-    const { count: todayCount } = await this.supabase
-      .from('appointments')
-      .select('id', { count: 'exact', head: true })
-      .eq('appointment_date', today);
-
-    // Get upcoming count
-    const { count: upcomingCount } = await this.supabase
-      .from('appointments')
-      .select('id', { count: 'exact', head: true })
-      .gt('appointment_date', today)
-      .in('status', ['confirmed', 'rescheduled']);
+    const todayCount = appointments.filter((a: any) => a.appointment_date === today).length;
+    const upcomingCount = appointments.filter((a: any) =>
+      a.appointment_date > today && ['confirmed', 'rescheduled'].includes(a.status)
+    ).length;
 
     return {
-      total: appointments?.length || 0,
+      total: appointments.length,
       pending: statusCounts['pending_payment'] || 0,
       confirmed: statusCounts['confirmed'] || 0,
       completed: statusCounts['completed'] || 0,
       cancelled: statusCounts['cancelled'] || 0,
       no_show: statusCounts['no_show'] || 0,
-      today: todayCount || 0,
-      upcoming: upcomingCount || 0,
+      today: todayCount,
+      upcoming: upcomingCount,
     };
   }
-
-  // ============================================================================
-  // Slot Operations
-  // ============================================================================
 
   /**
    * Get available slots for a doctor
@@ -760,101 +447,151 @@ class AppointmentService {
     hospitalId: string | null,
     date: string,
     consultationType?: ConsultationType
-  ): Promise<AvailableSlot[]> {
-    // Get doctor's schedule for the day
-    const dayOfWeek = new Date(date).getDay();
+  ): Promise<any[]> {
+    // Robust date parsing (avoid UTC shift issues)
+    const [year, month, day] = date.split('-').map(Number);
+    const dateObj = new Date(year, month - 1, day);
+    const dayOfWeek = dateObj.getDay();
     const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     const dayName = dayNames[dayOfWeek];
 
-    const { data: schedule } = await this.supabase
-      .from('doctor_schedules')
-      .select('*')
-      .eq('doctor_id', doctorId)
-      .eq('day_of_week', dayName)
-      .eq('is_active', true)
-      .maybeSingle();
+    const schedules = await doctorRepository.getScheduleByDay(doctorId, dayName);
 
-    if (!schedule) {
+    // Get current IST time for filtering today's slots
+    const now = new Date();
+    const currentISTDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+    const currentISTTime = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(now);
+
+    const isTodayInIST = date === currentISTDate;
+
+    if (!schedules || schedules.length === 0) {
       return [];
     }
 
-    // Get doctor's consultation duration
-    const { data: doctor } = await this.supabase
-      .from('doctors')
-      .select('consultation_duration, fee_in_person, fee_video, fee_chat, consultation_types')
-      .eq('id', doctorId)
-      .single();
-
-    const duration = doctor?.consultation_duration || APPOINTMENT_DURATIONS.DEFAULT;
+    const doctor = await doctorRepository.findWithRelations(doctorId);
 
     // Get existing appointments for the date
-    const { data: existingAppointments } = await this.supabase
-      .from('appointments')
-      .select('start_time, end_time')
-      .eq('doctor_id', doctorId)
-      .eq('appointment_date', date)
-      .not('status', 'in', '("cancelled", "no_show")');
-
-    const bookedSlots = new Set(
-      (existingAppointments || []).map((a: any) => a.start_time)
+    const { data: appointments } = await appointmentRepository.findMany(
+      {
+        doctor_id: doctorId,
+        scheduled_date: date,
+        status: ['confirmed', 'checked_in', 'in_progress', 'rescheduled']
+      },
+      1,
+      100
     );
 
-    // Generate available slots
-    const slots: AvailableSlot[] = [];
-    const scheduleSlots = [
-      { start: schedule.morning_start, end: schedule.morning_end },
-      { start: schedule.afternoon_start, end: schedule.afternoon_end },
-      { start: schedule.evening_start, end: schedule.evening_end },
-    ];
+    // Normalize booked slots to HH:mm from TIMESTAMPTZ - Converting to IST
+    const bookedSlots = new Set(
+      (appointments || []).map((a: any) => {
+        if (!a.scheduled_start) return null;
+        return formatToIST(a.scheduled_start);
+      }).filter(Boolean)
+    );
 
-    for (const slot of scheduleSlots) {
-      if (!slot.start || !slot.end) continue;
+    // Generate available slots from all shifts
+    const slots: any[] = [];
 
-      let currentTime = slot.start;
-      while (currentTime < slot.end) {
-        const endTime = this.calculateEndTime(currentTime, duration);
+    // Check if doctor supports the requested consultation type (from their profile)
+    const doctorTypes = (doctor?.consultation_types as string[]) || [];
+    if (consultationType && doctorTypes.length > 0 && !doctorTypes.includes(consultationType)) {
+      // Doctor doesn't support this consultation type at all
+      return [];
+    }
 
-        if (endTime <= slot.end && !bookedSlots.has(currentTime)) {
-          const fee = this.getConsultationFee(doctor, consultationType || 'in_person');
-          
-          slots.push({
-            date,
-            start_time: currentTime,
-            end_time: endTime,
-            consultation_types: doctor?.consultation_types || ['in_person'],
-            remaining_capacity: 1,
-            fee,
-          });
+    for (const schedule of schedules) {
+      // No longer filter by schedule.consultation_type - use doctor profile instead
+
+      // Time normalization
+      let currentTime = schedule.start_time?.substring(0, 5);
+      const endTimeLimit = schedule.end_time?.substring(0, 5);
+
+      if (!currentTime || !endTimeLimit) {
+        continue;
+      }
+
+      const duration = schedule.slot_duration_minutes ||
+        doctor?.slot_duration_minutes ||
+        doctor?.consultation_duration ||
+        APPOINTMENT_DURATIONS.DEFAULT;
+
+      // Handle breaks if any
+      const breakStart = schedule.break_start?.substring(0, 5);
+      const breakEnd = schedule.break_end?.substring(0, 5);
+
+      let iterations = 0;
+      while (currentTime < endTimeLimit && iterations < 100) {
+        iterations++;
+        const nextTime = this.calculateEndTime(currentTime, duration);
+
+        if (nextTime <= endTimeLimit) {
+          // Check if it's during a break
+          const isInBreak = breakStart && breakEnd && currentTime >= breakStart && currentTime < breakEnd;
+
+          if (!isInBreak && !bookedSlots.has(currentTime)) {
+            // Filter out past slots for today
+            const isPastSlot = isTodayInIST && currentTime <= currentISTTime;
+
+            if (!isPastSlot) {
+              const fee = this.getConsultationFee(doctor, consultationType || schedule.consultation_type || 'in_person');
+
+              slots.push({
+                date,
+                time: currentTime,
+                startTime: currentTime, // Legacy support for SlotPicker
+                endTime: nextTime,
+                consultation_types: (doctor?.consultation_types as string[]) || ['in_person', 'online'],
+                remaining_capacity: (schedule.max_patients_per_slot || doctor?.max_patients_per_slot || 1),
+                available: true,
+                isAvailable: true, // Legacy support for SlotPicker
+                fee,
+              });
+            }
+          }
         }
 
-        currentTime = endTime;
+        currentTime = nextTime;
       }
     }
 
-    return slots;
+    // Sort slots by time
+    return slots.sort((a, b) => a.time.localeCompare(b.time));
   }
 
   /**
-   * Check if a slot is available
+   * Get fee breakdown for a specific doctor and consultation type
    */
-  private async checkSlotAvailability(
+  async getFeeBreakdown(
     doctorId: string,
-    hospitalId: string | null,
-    date: string,
-    startTime: string,
-    endTime: string,
-    consultationType: ConsultationType
-  ): Promise<boolean> {
-    // Check for existing appointments at this slot
-    const { count } = await this.supabase
-      .from('appointments')
-      .select('id', { count: 'exact', head: true })
-      .eq('doctor_id', doctorId)
-      .eq('appointment_date', date)
-      .eq('start_time', startTime)
-      .not('status', 'in', '("cancelled", "no_show")');
+    consultationType: ConsultationType,
+    hospitalId?: string
+  ): Promise<{
+    consultationFee: number;
+    platformFee: number;
+    gstAmount: number;
+    totalAmount: number;
+  }> {
+    const doctor = await doctorRepository.findWithRelations(doctorId);
+    if (!doctor) {
+      throw new NotFoundError('Doctor');
+    }
 
-    return (count || 0) === 0;
+    const consultationFee = this.getConsultationFee(doctor, consultationType);
+    const platformFee = 0; // STRICT: No platform fee
+    const gstAmount = 0; // STRICT: No GST
+    const totalAmount = consultationFee;
+
+    return {
+      consultationFee,
+      platformFee,
+      gstAmount,
+      totalAmount,
+    };
   }
 
   // ============================================================================
@@ -865,71 +602,106 @@ class AppointmentService {
    * Transform database row to appointment type
    */
   private transformAppointment(data: any): AppointmentWithDetails {
+    const doctorData = data.doctor || data.doctors;
+    const hospitalData = data.hospital || data.hospitals;
+    const consultationData = data.consultation;
+
     return {
       ...data,
+      // Map DB names back to frontend expected names
+      booking_id: data.appointment_number,
+      bookingId: data.appointment_number,
+      appointmentNumber: data.appointment_number,
+      appointment_date: data.scheduled_date,
+      appointmentDate: data.scheduled_date,
+
+      // Preserve original timestamps for frontend
+      scheduledStart: data.scheduled_start,
+      scheduledEnd: data.scheduled_end,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+      completedAt: data.completed_at,
+
+      // Legacy formatted times (HH:mm) - Convering to IST
+      start_time: formatToIST(data.scheduled_start),
+      startTime: formatToIST(data.scheduled_start),
+      end_time: formatToIST(data.scheduled_end),
+      endTime: formatToIST(data.scheduled_end),
+
+      // Explicit billing mapping
+      consultationFee: data.consultation_fee,
+      totalAmount: data.total_amount,
+
+      consultationType: data.consultation_type,
+
       patient: data.patient ? {
         id: data.patient.id,
-        full_name: data.patient.full_name,
+        name: data.patient.name,
         phone: data.patient.phone,
         email: data.patient.email,
         avatar_url: data.patient.avatar_url,
         gender: data.patient.gender,
         date_of_birth: data.patient.date_of_birth,
       } : undefined,
+
+      // Address frontend requirement for top-level patient details
+      patientName: data.patient?.name || 'Unknown Patient',
+      patientPhone: data.patient?.phone || '',
+      patientAge: data.patient?.date_of_birth ? new Date().getFullYear() - new Date(data.patient.date_of_birth).getFullYear() : null,
+      patientGender: data.patient?.gender || null,
+
       family_member: data.family_member || null,
-      doctor: data.doctor ? {
-        id: data.doctor.id,
-        user_id: data.doctor.user_id,
-        full_name: data.doctor.users?.full_name || null,
-        title: data.doctor.title,
-        avatar_url: data.doctor.users?.avatar_url || null,
-        specialization_name: data.doctor.specializations?.name || null,
+
+      doctor: doctorData ? {
+        id: doctorData.id,
+        user_id: doctorData.user_id,
+        name: doctorData.users?.name || null,
+        title: doctorData.title,
+        profilePictureUrl: doctorData.users?.avatar_url || null,
+        specialization: doctorData.specializations?.name || null,
       } : undefined,
-      hospital: data.hospital || undefined,
-      consultation: data.consultation || null,
+
+      hospital: hospitalData || undefined,
+
+      // Clinical data
+      consultation: consultationData || null,
+      vitals: consultationData?.vitals || null,
+      notes: consultationData?.chief_complaint || data.patient_notes || null,
+
       prescription: data.prescription || null,
-      payment: data.payment || null,
+      payment: (() => {
+        // Handle payment relation being an array (One-to-Many)
+        const paymentData = Array.isArray(data.payment) ? data.payment[0] : data.payment;
+
+        if (!paymentData) return null;
+
+        return {
+          id: paymentData.id,
+          consultationFee: paymentData.base_amount || data.consultation_fee || 0,
+          platformFee: paymentData.platform_fee || 0,
+          gatewayFee: 0,
+          gstAmount: paymentData.gst_amount || 0,
+          totalAmount: paymentData.total_amount || data.total_amount || 0,
+          discountAmount: paymentData.discount_amount || 0,
+          finalAmount: paymentData.total_amount || data.total_amount || 0,
+          status: paymentData.status,
+          paidAt: paymentData.paid_at,
+        };
+      })(),
     };
   }
 
-  /**
-   * Check user access to appointment
-   */
-  private hasAccess(
-    appointment: AppointmentWithDetails,
-    userId: string,
-    role: 'patient' | 'doctor' | 'hospital' | 'admin'
-  ): boolean {
-    if (role === 'admin') return true;
-    if (role === 'patient') return appointment.patient_id === userId;
-    if (role === 'doctor') return appointment.doctor?.user_id === userId;
-    if (role === 'hospital') {
-      // Check if user is admin of the hospital
-      return true; // TODO: Implement hospital admin check
-    }
-    return false;
-  }
 
-  /**
-   * Generate unique booking ID
-   */
-  private generateBookingId(): string {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `RZX${timestamp}${random}`;
-  }
 
   /**
    * Get consultation fee based on type
    */
   private getConsultationFee(doctor: any, type: ConsultationType): number {
     switch (type) {
-      case 'video':
-        return doctor?.fee_video || doctor?.fee_in_person || 0;
-      case 'chat':
-        return doctor?.fee_chat || doctor?.fee_in_person || 0;
+      case 'online':
+        return doctor?.consultation_fee_online || doctor?.consultation_fee_in_person || 0;
       default:
-        return doctor?.fee_in_person || 0;
+        return doctor?.consultation_fee_in_person || 0;
     }
   }
 
@@ -954,21 +726,41 @@ class AppointmentService {
   }
 
   /**
-   * Calculate refund amount based on cancellation policy
+   * Send appointment confirmation notification
    */
-  private calculateRefund(appointment: AppointmentWithDetails): number {
-    const appointmentDate = new Date(`${appointment.appointment_date}T${appointment.start_time}`);
-    const now = new Date();
-    const hoursUntil = (appointmentDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+  private async sendConfirmationNotification(appointment: AppointmentWithDetails): Promise<void> {
+    const patientName = appointment.patientName || 'Patient';
+    const doctorName = appointment.doctor?.name ? `Dr. ${appointment.doctor.name}` : 'Doctor';
+    const dateStr = formatAppointmentDate(appointment.appointmentDate, appointment.startTime);
+    // Format consultation type: 'online' -> 'online', 'in_person' -> 'in-clinic'
+    const typeStr = appointment.consultationType === 'online' ? 'online' : 'in-clinic';
 
-    if (hoursUntil >= 24) {
-      return appointment.total_amount; // 100% refund
-    } else if (hoursUntil >= 4) {
-      return Math.round(appointment.total_amount * 0.75); // 75% refund
-    } else if (hoursUntil >= 1) {
-      return Math.round(appointment.total_amount * 0.50); // 50% refund
+    try {
+      if (appointment.patientPhone) {
+        await notificationService.send({
+          purpose: NotificationPurpose.APPOINTMENT_CONFIRMED,
+          phone: appointment.patientPhone,
+          channel: NotificationChannel.WhatsApp,
+          variables: {
+            "1": patientName,
+            "2": doctorName,
+            "3": dateStr,
+            "4": typeStr
+          }
+        });
+      }
+    } catch (error) {
+      this.log.error('Failed to send appointment confirmation', error);
+      // Don't fail the request, just log
     }
-    return 0; // No refund
+  }
+
+  /**
+   * Map ConsultationType to database enum values
+   */
+  private mapConsultationType(type: ConsultationType | string): "in_person" | "online" | "phone" | "home_visit" {
+    if (type === 'video' || type === 'chat') return 'online';
+    return type as any;
   }
 }
 

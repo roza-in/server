@@ -16,7 +16,7 @@ import type {
 export interface FamilyMember {
   id: string;
   user_id: string;
-  full_name: string;
+  name: string;
   relationship: RelationshipType;
   gender: Gender | null;
   date_of_birth: string | null;
@@ -40,7 +40,7 @@ export interface FamilyMemberWithHealth extends FamilyMember {
 }
 
 export interface CreateFamilyMemberInput {
-  full_name: string;
+  name: string;
   relationship: RelationshipType;
   gender?: Gender;
   date_of_birth?: string;
@@ -53,7 +53,7 @@ export interface CreateFamilyMemberInput {
 }
 
 export interface UpdateFamilyMemberInput {
-  full_name?: string;
+  name?: string;
   relationship?: RelationshipType;
   gender?: Gender;
   date_of_birth?: string;
@@ -93,12 +93,17 @@ export interface HealthDocument {
 export interface DocumentWithDetails extends HealthDocument {
   family_member?: {
     id: string;
-    full_name: string;
+    name: string;
   } | null;
   appointment?: {
     id: string;
     booking_id: string;
     appointment_date: string;
+    // New schema fields
+    appointment_number?: string;
+    scheduled_date?: string;
+    scheduled_start?: string;
+
     doctor_name: string | null;
   } | null;
 }
@@ -391,7 +396,7 @@ export interface Surgery {
 export interface HealthSummary {
   user: {
     id: string;
-    full_name: string | null;
+    name: string | null;
     date_of_birth: string | null;
     blood_group: string | null;
   };
@@ -412,3 +417,4 @@ export interface FamilyHealthSummary {
   conditions: MedicalCondition[];
   upcoming_reminders: MedicationReminder[];
 }
+

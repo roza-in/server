@@ -15,9 +15,11 @@ import type {
 // Hospital Extended Types
 // ============================================================================
 
-export interface HospitalProfile extends Hospital {
+export type HospitalRow = Hospital;
+
+export interface HospitalProfile extends HospitalRow {
   doctors?: Doctor[];
-  specializations?: Specialization[];
+  specializationDetails?: Specialization[];
   activeAppointmentsCount?: number;
   pendingVerification?: boolean;
 }
@@ -49,7 +51,7 @@ export interface HospitalWithDoctors extends Hospital {
 
 export interface DoctorListItem {
   id: string;
-  full_name: string;
+  name: string;
   title: string;
   specialization_id: string | null;
   specialization_name?: string;
@@ -104,6 +106,11 @@ export interface RecentAppointment {
   doctor_name: string;
   appointment_date: string;
   start_time: string;
+  // New schema fields
+  appointment_number?: string;
+  scheduled_date?: string;
+  scheduled_start?: string;
+
   consultation_type: string;
   status: string;
   payment_status: string;
@@ -117,6 +124,66 @@ export interface TopDoctor {
   rating: number | null;
   total_ratings: number;
   revenue_generated: number;
+}
+
+// ============================================================================
+// Hospital Operation Types
+// ============================================================================
+
+export interface HospitalPatient {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string;
+  avatar_url: string | null;
+  last_visit: string | null;
+  total_appointments: number;
+  gender: string | null;
+  date_of_birth: string | null;
+}
+
+export interface HospitalAppointment extends RecentAppointment {
+  patient_phone: string;
+  consultation_fee: number;
+  notes: string | null;
+  created_at: string;
+}
+
+// ============================================================================
+// Hospital Billing & Payment Types
+// ============================================================================
+
+export interface HospitalPayment {
+  id: string;
+  appointment_id: string;
+  patient_name: string;
+  amount: number;
+  platform_fee: number;
+  hospital_payout: number;
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  payment_method: string;
+  paid_at: string | null;
+}
+
+export interface HospitalInvoice {
+  id: string;
+  invoice_number: string;
+  appointment_id: string | null;
+  patient_name: string;
+  amount: number;
+  status: 'draft' | 'issued' | 'paid' | 'cancelled';
+  due_date: string | null;
+  issued_at: string;
+}
+
+export interface HospitalSettlement {
+  id: string;
+  period_start: string;
+  period_end: string;
+  amount: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  settled_at: string | null;
+  transaction_id: string | null;
 }
 
 export interface RevenueDataPoint {
@@ -217,7 +284,14 @@ export interface UpdateHospitalInput {
   total_beds?: number;
   icu_beds?: number;
   operating_theaters?: number;
-  address?: HospitalAddress;
+  address?: string;
+  landmark?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  country?: string;
+  latitude?: number;
+  longitude?: number;
   contact_phone?: string;
   contact_email?: string;
   website_url?: string;
@@ -263,8 +337,8 @@ export interface UpdatePaymentSettingsInput {
 }
 
 export interface HospitalAddress {
-  line1?: string;
-  line2?: string;
+  address?: string;
+  landmark?: string;
   city?: string;
   state?: string;
   pincode?: string;
@@ -317,7 +391,7 @@ export interface HospitalVerificationDetails {
   verified_at: string | null;
   documents: VerificationDocument[];
   admin_details: {
-    full_name: string | null;
+    name: string | null;
     email: string | null;
     phone: string;
   };
@@ -356,3 +430,4 @@ export interface SubscriptionFeature {
   included: boolean;
   limit?: number;
 }
+

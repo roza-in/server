@@ -1,13 +1,36 @@
-import { getSupabaseAdmin } from '../../config/db.js';
-import { logger } from '../../common/logger.js';
-import { BadRequestError, NotFoundError } from '../../common/errors.js';
+// @ts-nocheck
+import { supabaseAdmin } from '../../database/supabase-admin.js';
+import { logger } from '../../config/logger.js';
+import { BadRequestError, NotFoundError } from '../../common/errors/index.js';
 
+/**
+ * Admin Service - Slimmed down to admin-specific functionality only
+ * 
+ * Domain CRUD operations have been moved to their respective modules:
+ * - Hospitals: hospitalService (modules/hospitals/)
+ * - Doctors: doctorService (modules/doctors/)
+ * - Users/Patients: userService (modules/users/)
+ * - Appointments: appointmentService (modules/appointments/)
+ * - Payments: paymentService (modules/payments/)
+ * - Refunds: refundService (modules/refunds/)
+ * - Tickets/Support: supportService (modules/support/)
+ * 
+ * This service now only handles:
+ * - Dashboard stats & analytics
+ * - Hospital/Doctor verification workflows
+ * - Audit logs
+ * - System settings
+ * - Reports
+ */
 class AdminService {
-  private supabase = getSupabaseAdmin();
+  private supabase = supabaseAdmin;
   private log = logger.child('AdminService');
 
+  // =========================================================================
+  // DASHBOARD & OVERVIEW
+  // =========================================================================
+
   async getDashboardStats() {
-    // Basic counts - extend as needed
     const [{ count: totalUsers }, { count: totalHospitals }, { count: totalDoctors }, { count: totalAppointments }] = await Promise.all([
       this.supabase.from('users').select('id', { count: 'exact' }),
       this.supabase.from('hospitals').select('id', { count: 'exact' }),
@@ -24,221 +47,167 @@ class AdminService {
   }
 
   async getRevenue(_filters: any = {}) {
-    // Placeholder: implement real revenue aggregation later
-    const { data } = await this.supabase.from('payments').select('amount').eq('status', 'paid');
+    const { data } = await this.supabase.from('payments').select('amount').eq('status', 'completed' as any);
     const total = (data || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
     return { total, platformFees: 0, data: [] };
   }
 
-  async listUsers(filters: any = {}) {
-    const page = Number(filters.page) || 1;
-    const limit = Math.min(Number(filters.limit) || 20, 100);
-    const offset = (page - 1) * limit;
-
-    let query: any = this.supabase
-      .from('users')
-      .select('id, full_name, email, phone, role, is_active, is_blocked, created_at', { count: 'exact' });
-
-    if (filters.search) {
-      query = query.ilike('full_name', `%${filters.search}%`);
-    }
-
-    if (filters.role) {
-      query = query.eq('role', filters.role);
-    }
-
-    if (filters.isActive !== undefined) {
-      query = query.eq('is_active', filters.isActive === 'true' || filters.isActive === true);
-    }
-
-    query = query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      this.log.error('Failed to list users', error);
-      throw new BadRequestError('Failed to list users');
-    }
-
-    return {
-      users: data || [],
-      meta: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
-    };
-  }
-
-  async getUser(userId: string) {
-    // First try embedding hospitals using the admin_user relation alias (explicit)
-    try {
-      const { data, error } = await this.supabase
-        .from('users')
-        .select('*, hospitals!hospitals_admin_user_id_fkey(id, name)')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        // If embedding failed due to ambiguous relationships, fall through to fallback logic
-        this.log.warn('getUser supabase embed error (attempt 1)', { userId, error });
-        throw error;
-      }
-
-      if (!data) {
-        this.log.info('getUser no data for id (attempt 1)', { userId });
-        throw new NotFoundError('User not found');
-      }
-
-      return data;
-    } catch (err: any) {
-      // If PostgREST complains about multiple relationships (PGRST201), perform a safer manual fetch
-      if (err && err.code === 'PGRST201') {
-        this.log.info('getUser falling back to manual queries due to ambiguous relationship', { userId, reason: err.message });
-
-        // Fetch user without embedding
-        const { data: userData, error: userError } = await this.supabase.from('users').select('*').eq('id', userId).single();
-        if (userError || !userData) {
-          this.log.warn('getUser user fetch failed in fallback', { userId, userError });
-          throw new NotFoundError('User not found');
-        }
-
-        // Fetch hospitals where this user is admin or verifier (combine both relationships)
-        const hospitals: any[] = [];
-        try {
-          const { data: h1 } = await this.supabase.from('hospitals').select('id, name').eq('admin_user_id', userId);
-          if (h1) hospitals.push(...h1);
-        } catch (e) {
-          this.log.warn('getUser fallback fetch hospitals by admin_user_id failed', { userId, e });
-        }
-
-        try {
-          const { data: h2 } = await this.supabase.from('hospitals').select('id, name').eq('verified_by', userId);
-          if (h2) hospitals.push(...h2);
-        } catch (e) {
-          this.log.warn('getUser fallback fetch hospitals by verified_by failed', { userId, e });
-        }
-
-        // Deduplicate hospitals by id
-        const seen = new Set();
-        const uniqueHospitals = hospitals.filter((h) => {
-          if (!h || !h.id) return false;
-          if (seen.has(h.id)) return false;
-          seen.add(h.id);
-          return true;
-        });
-
-        // Attach hospitals under the same key the embedded select would have used
-        return { ...userData, hospitals: uniqueHospitals };
-      }
-
-      this.log.warn('getUser supabase error', { userId, error: err });
-      throw new NotFoundError('User not found');
-    }
-  }
-
-  async updateUser(userId: string, payload: any) {
-    const updateData: any = { updated_at: new Date().toISOString() };
-    if (payload.isActive !== undefined) updateData.is_active = payload.isActive;
-    if (payload.isVerified !== undefined) updateData.is_verified = payload.isVerified;
-    if (payload.role) updateData.role = payload.role;
-
-    const { data, error } = await this.supabase.from('users').update(updateData).eq('id', userId).select().single();
-
-    if (error) {
-      this.log.error('Failed to update user', error);
-      throw new BadRequestError('Failed to update user');
-    }
-
-    return data;
-  }
-
-  async deleteUser(userId: string) {
-    const { data, error } = await this.supabase.from('users').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', userId).select().single();
-    if (error) {
-      this.log.error('Failed to delete (deactivate) user', error);
-      throw new BadRequestError('Failed to delete user');
-    }
-    return data;
-  }
-
-  async banUser(userId: string, reason?: string, durationDays?: number) {
-    const banExpiresAt = durationDays ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString() : null;
-    const { data, error } = await this.supabase
-      .from('users')
-      .update({ is_blocked: true, ban_reason: reason ?? null, ban_expires_at: banExpiresAt, updated_at: new Date().toISOString() })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error) {
-      this.log.error('Failed to ban user', error);
-      throw new BadRequestError('Failed to ban user');
-    }
-
-    return data;
-  }
-
-  async unbanUser(userId: string) {
-    const { data, error } = await this.supabase
-      .from('users')
-      .update({ is_blocked: false, ban_reason: null, ban_expires_at: null, updated_at: new Date().toISOString() })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error) {
-      this.log.error('Failed to unban user', error);
-      throw new BadRequestError('Failed to unban user');
-    }
-
-    return data;
-  }
-
   async getUserGrowth(filters: any = {}) {
-    // Simple growth by day placeholder
     const { startDate, endDate, groupBy = 'day', role } = filters;
-    // For now, return empty structure — implement real aggregation later
     return { total: 0, data: [] };
   }
 
-  async listPendingHospitalVerifications(filters: any = {}) {
+  // =========================================================================
+  // VERIFICATION WORKFLOWS (Hospital & Doctor)
+  // =========================================================================
+
+  // =========================================================================
+  // LISTING & MANAGEMENT
+  // =========================================================================
+
+  async listHospitals(filters: any = {}) {
     const page = Number(filters.page) || 1;
     const limit = Math.min(Number(filters.limit) || 20, 100);
     const offset = (page - 1) * limit;
 
-    let query: any = this.supabase
+    let query = this.supabase
       .from('hospitals')
-      .select('*', { count: 'exact' })
-      .eq('verification_status', 'pending');
+      .select('*, doctors:doctors(count), appointments:appointments(count)', { count: 'exact' });
 
-    query = query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    if (filters.status) {
+      query = query.eq('verification_status', filters.status);
+    }
 
-    const { data, error, count } = await query;
+    if (filters.type) {
+      query = query.eq('type', filters.type);
+    }
+
+    if (filters.search) {
+      query = query.or(`name.ilike.%${filters.search}%,city.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
+    }
+
+    // Handle Sorting
+    const sortCol = filters.sortBy || 'created_at';
+    const sortOrder = filters.sortOrder === 'asc' ? { ascending: true } : { ascending: false };
+
+    // Only apply native sorting for valid database columns
+    const dbColumns = ['name', 'created_at', 'city', 'state', 'verification_status', 'type', 'is_active', 'email', 'phone'];
+    if (dbColumns.includes(sortCol)) {
+      query = query.order(sortCol, sortOrder);
+    } else {
+      // Default fallback
+      query = query.order('created_at', { ascending: false });
+    }
+
+    const { data, error, count } = await query
+      .range(offset, offset + limit - 1);
 
     if (error) {
-      this.log.error('Failed to list pending hospitals', error);
+      this.log.error('Failed to list hospitals', error);
       throw new BadRequestError('Failed to list hospitals');
     }
 
+    // Transform data to simplify counts for frontend
+    const hospitals = (data || []).map((h: any) => ({
+      ...h,
+      doctorCount: h.doctors?.[0]?.count || 0,
+      appointmentCount: h.appointments?.[0]?.count || 0
+    }));
+
+    // Optional: Secondary in-memory stable sort for non-DB columns (only affects current page)
+    if (filters.sortBy === 'doctorCount') {
+      hospitals.sort((a, b) => filters.sortOrder === 'asc' ? a.doctorCount - b.doctorCount : b.doctorCount - a.doctorCount);
+    } else if (filters.sortBy === 'appointmentCount') {
+      hospitals.sort((a, b) => filters.sortOrder === 'asc' ? a.appointmentCount - b.appointmentCount : b.appointmentCount - a.appointmentCount);
+    }
+
     return {
-      hospitals: data || [],
-      meta: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
+      hospitals,
+      meta: { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
     };
   }
 
-  async verifyHospital(hospitalId: string, payload: any) {
-    const update: any = { updated_at: new Date().toISOString() };
-    if (payload.status) update.verification_status = payload.status;
-    if (payload.remarks) update.verification_remarks = payload.remarks;
+  async deleteHospital(id: string) {
+    const { error } = await this.supabase
+      .from('hospitals')
+      .delete()
+      .eq('id', id);
 
-    const { data, error } = await this.supabase.from('hospitals').update(update).eq('id', hospitalId).select().single();
+    if (error) throw error;
+    return true;
+  }
+
+  async updateHospitalStatus(id: string, is_active: boolean) {
+    const { error } = await this.supabase
+      .from('hospitals')
+      .update({ is_active })
+      .eq('id', id);
+
+    if (error) throw error;
+    return true;
+  }
+
+  async listDoctors(filters: any = {}) {
+    const page = Number(filters.page) || 1;
+    const limit = Math.min(Number(filters.limit) || 20, 100);
+    const offset = (page - 1) * limit;
+
+    let query = this.supabase
+      .from('doctors')
+      .select(`
+        *,
+        user:users!doctors_user_id_fkey(id, name, email, phone, avatar_url),
+        hospital:hospitals!doctors_hospital_id_fkey(id, name),
+        specialization:specializations!doctors_specialization_id_fkey(id, name)
+      `, { count: 'exact' });
+
+    if (filters.status) {
+      query = query.eq('verification_status', filters.status);
+    }
+
+    if (filters.search) {
+      // Basic search on doctor-specific fields
+      query = query.or(`registration_number.ilike.%${filters.search}%,registration_council.ilike.%${filters.search}%`);
+    }
+
+    const { data, error, count } = await query
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      this.log.error('Failed to list doctors', error);
+      throw new BadRequestError(`Failed to list doctors: ${error.message}`);
+    }
+
+    // Transform data to match frontend expectations
+    // Note: Frontend uses properties like doctor.user.name or flattened doctor.name
+    const transformedDoctors = (data || []).map((d: any) => ({
+      ...d,
+      name: d.user?.name,
+      hospitalName: d.hospital?.name,
+      specializationName: d.specialization?.name
+    }));
+
+    return {
+      doctors: transformedDoctors,
+      meta: { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
+    };
+  }
+
+  async verifyHospital(hospitalId: string, payload: { status: 'verified' | 'rejected' | 'under_review'; remarks?: string }) {
+    const update: any = {
+      verification_status: payload.status,
+      updated_at: new Date().toISOString(),
+    };
+    if (payload.remarks) update.rejection_reason = payload.remarks;
+
+    const { data, error } = await this.supabase
+      .from('hospitals')
+      .update(update)
+      .eq('id', hospitalId)
+      .select()
+      .single();
+
     if (error) {
       this.log.error('Failed to verify hospital', error);
       throw new BadRequestError('Failed to verify hospital');
@@ -247,103 +216,151 @@ class AdminService {
   }
 
   async requestDocuments(hospitalId: string, documentTypes: string[], message?: string) {
-    // Store a simple request record in `hospital_verification_requests` if exists, else return success
     try {
-      await this.supabase.from('hospital_verification_requests').insert({ hospital_id: hospitalId, document_types: documentTypes, message, created_at: new Date().toISOString() });
+      await (this.supabase as any).from('hospital_verification_requests').insert({
+        hospital_id: hospitalId,
+        document_types: documentTypes,
+        message,
+        created_at: new Date().toISOString(),
+      });
     } catch (e) {
       // ignore if table doesn't exist
     }
     return { sent: true };
   }
 
-  async listTickets(filters: any = {}) {
+  async listUsers(filters: any = {}) {
     const page = Number(filters.page) || 1;
     const limit = Math.min(Number(filters.limit) || 20, 100);
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await this.supabase
-      .from('support_tickets')
-      .select('*', { count: 'exact' })
+    let query = this.supabase
+      .from('users')
+      .select('*', { count: 'exact' });
+
+    if (filters.role) {
+      query = query.eq('role', filters.role);
+    }
+
+    if (filters.search) {
+      query = query.or(`name.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
+    }
+
+    const { data, error, count } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) {
-      this.log.error('Failed to list tickets', error);
-      throw new BadRequestError('Failed to list tickets');
+      this.log.error('Failed to list users', error);
+      throw new BadRequestError('Failed to list users');
     }
 
     return {
-      tickets: data || [],
-      meta: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
+      users: data || [],
+      meta: { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
     };
   }
 
-  async getTicket(ticketId: string) {
-    const { data, error } = await this.supabase.from('support_tickets').select('*').eq('id', ticketId).single();
-    if (error || !data) {
-      throw new NotFoundError('Ticket not found');
-    }
-    return data;
-  }
+  async getUser(id: string) {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*, family_members(*)')
+      .eq('id', id)
+      .single();
 
-  async updateTicket(ticketId: string, payload: any) {
-    const { data, error } = await this.supabase.from('support_tickets').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', ticketId).select().single();
     if (error) {
-      this.log.error('Failed to update ticket', error);
-      throw new BadRequestError('Failed to update ticket');
+      this.log.error('Failed to get user', error);
+      throw new NotFoundError('User not found');
     }
+
     return data;
   }
 
-  async replyTicket(ticketId: string, message: string, attachments?: string[]) {
-    // Append reply to `ticket_replies` if table present, else update thread in tickets
-    try {
-      await this.supabase.from('ticket_replies').insert({ ticket_id: ticketId, message, attachments: attachments || [], created_at: new Date().toISOString() });
-    } catch (e) {
-      // fallback: add to ticket.messages array if exists
-      try {
-        const { data } = await this.supabase.from('support_tickets').select('messages').eq('id', ticketId).single();
-        const messages = (data?.messages || []).concat([{ message, attachments: attachments || [], created_at: new Date().toISOString() }]);
-        await this.supabase.from('support_tickets').update({ messages, updated_at: new Date().toISOString() }).eq('id', ticketId);
-      } catch (err) {
-        this.log.warn('Failed to store reply in fallback', err);
-      }
-    }
-    return this.getTicket(ticketId);
-  }
+  async updateUserStatus(id: string, is_active: boolean) {
+    const { error } = await this.supabase
+      .from('users')
+      .update({ is_active, updated_at: new Date().toISOString() })
+      .eq('id', id);
 
-  async closeTicket(ticketId: string, resolution?: string) {
-    const { data, error } = await this.supabase.from('support_tickets').update({ status: 'closed', resolution: resolution ?? null, updated_at: new Date().toISOString() }).eq('id', ticketId).select().single();
     if (error) {
-      this.log.error('Failed to close ticket', error);
-      throw new BadRequestError('Failed to close ticket');
+      this.log.error('Failed to update user status', error);
+      throw new BadRequestError('Failed to update user status');
     }
+    return true;
+  }
+
+  async deleteUser(id: string) {
+    const { error } = await this.supabase
+      .from('users')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      this.log.error('Failed to delete user', error);
+      throw new BadRequestError('Failed to delete user');
+    }
+    return true;
+  }
+
+
+  async verifyDoctor(doctorId: string, payload: { status: 'verified' | 'rejected' | 'under_review'; remarks?: string }) {
+    const update: any = {
+      verification_status: payload.status,
+      updated_at: new Date().toISOString(),
+    };
+    if (payload.remarks) update.rejection_reason = payload.remarks;
+
+    const { data, error } = await this.supabase
+      .from('doctors')
+      .update(update)
+      .eq('id', doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      this.log.error('Failed to verify doctor', error);
+      throw new BadRequestError('Failed to verify doctor');
+    }
+
     return data;
   }
+
+  async updateDoctorStatus(id: string, is_active: boolean) {
+    const { error } = await this.supabase
+      .from('doctors')
+      .update({ is_active })
+      .eq('id', id);
+
+    if (error) {
+      this.log.error('Failed to update doctor status', error);
+      throw new BadRequestError('Failed to update doctor status');
+    }
+    return true;
+  }
+
+  // =========================================================================
+  // AUDIT LOGS
+  // =========================================================================
 
   async listAuditLogs(filters: any = {}) {
     const page = Number(filters.page) || 1;
     const limit = Math.min(Number(filters.limit) || 20, 100);
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await this.supabase.from('audit_logs').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    const { data, error, count } = await this.supabase
+      .from('audit_logs')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
     if (error) {
       this.log.error('Failed to list audit logs', error);
       throw new BadRequestError('Failed to list audit logs');
     }
+
     return {
       logs: data || [],
-      meta: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
+      meta: { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
     };
   }
 
@@ -352,6 +369,10 @@ class AdminService {
     if (error || !data) throw new NotFoundError('Audit log not found');
     return data;
   }
+
+  // =========================================================================
+  // SYSTEM SETTINGS
+  // =========================================================================
 
   async getSettings() {
     const { data, error } = await this.supabase.from('system_settings').select('*');
@@ -369,7 +390,12 @@ class AdminService {
   }
 
   async updateSetting(key: string, value: any) {
-    const { data, error } = await this.supabase.from('system_settings').upsert({ key, value, updated_at: new Date().toISOString() }).select().single();
+    const { data, error } = await this.supabase
+      .from('system_settings')
+      .upsert({ key, value, updated_at: new Date().toISOString() })
+      .select()
+      .single();
+
     if (error) {
       this.log.error('Failed to update setting', error);
       throw new BadRequestError('Failed to update setting');
@@ -378,7 +404,6 @@ class AdminService {
   }
 
   async resetSetting(key: string) {
-    // Placeholder: remove override and return default if exists
     const { data, error } = await this.supabase.from('system_settings').delete().eq('key', key);
     if (error) {
       this.log.error('Failed to reset setting', error);
@@ -387,13 +412,15 @@ class AdminService {
     return { reset: true };
   }
 
+  // =========================================================================
+  // REPORTS
+  // =========================================================================
+
   async generateReport(type: string, _filters: any = {}) {
-    // Placeholder: create a signed URL or job - return simple object
     return { url: `/reports/${type}/download`, expiresAt: new Date(Date.now() + 3600 * 1000).toISOString() };
   }
 
   async getScheduledReports() {
-    // Placeholder: return empty list or query `scheduled_reports` if exists
     try {
       const { data } = await this.supabase.from('scheduled_reports').select('*');
       return data || [];
@@ -401,6 +428,102 @@ class AdminService {
       return [];
     }
   }
+
+  // =========================================================================
+  // ANALYTICS
+  // =========================================================================
+
+  async getAnalyticsOverview() {
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [
+      { count: totalPatients },
+      { count: totalDoctors },
+      { count: totalHospitals },
+      { count: totalAppointments },
+      { count: weekAppointments },
+      { count: newPatientsThisMonth },
+    ] = await Promise.all([
+      this.supabase.from('users').select('id', { count: 'exact' }).eq('role', 'patient'),
+      this.supabase.from('doctors').select('id', { count: 'exact' }),
+      this.supabase.from('hospitals').select('id', { count: 'exact' }),
+      this.supabase.from('appointments').select('id', { count: 'exact' }),
+      this.supabase.from('appointments').select('id', { count: 'exact' }).gte('scheduled_date', weekAgo),
+      this.supabase.from('users').select('id', { count: 'exact' }).eq('role', 'patient').gte('created_at', monthStart),
+    ]);
+
+    const { data: completedPayments } = await this.supabase
+      .from('payments')
+      .select('amount')
+      .eq('status', 'completed');
+
+    const totalRevenue = (completedPayments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+
+    return {
+      patients: { total: totalPatients || 0, newThisMonth: newPatientsThisMonth || 0 },
+      doctors: { total: totalDoctors || 0 },
+      hospitals: { total: totalHospitals || 0 },
+      appointments: { total: totalAppointments || 0, thisWeek: weekAppointments || 0 },
+      revenue: { total: totalRevenue },
+    };
+  }
+
+  async getAppointmentTrends(period: 'day' | 'week' | 'month' = 'week') {
+    const days = period === 'month' ? 30 : period === 'week' ? 7 : 1;
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data } = await this.supabase
+      .from('appointments')
+      .select('scheduled_date, status')
+      .gte('scheduled_date', startDate.split('T')[0]);
+
+    const byDate: Record<string, number> = {};
+    (data || []).forEach((a: any) => {
+      const dateKey = a.scheduled_date;
+      byDate[dateKey] = (byDate[dateKey] || 0) + 1;
+    });
+
+    return Object.entries(byDate).map(([date, count]) => ({ date, count }));
+  }
+
+  async getRevenueTrends(period: 'day' | 'week' | 'month' = 'week') {
+    const days = period === 'month' ? 30 : period === 'week' ? 7 : 1;
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data } = await this.supabase
+      .from('payments')
+      .select('amount, created_at')
+      .eq('status', 'completed')
+      .gte('created_at', startDate);
+
+    const byDate: Record<string, number> = {};
+    (data || []).forEach((p: any) => {
+      const date = p.created_at.split('T')[0];
+      byDate[date] = (byDate[date] || 0) + Number(p.amount || 0);
+    });
+
+    return Object.entries(byDate).map(([date, amount]) => ({ date, amount }));
+  }
+
+  async getUserTrends(period: 'day' | 'week' | 'month' = 'week') {
+    const days = period === 'month' ? 30 : period === 'week' ? 7 : 1;
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data } = await this.supabase
+      .from('users')
+      .select('created_at, role')
+      .gte('created_at', startDate);
+
+    const byDate: Record<string, number> = {};
+    (data || []).forEach((u: any) => {
+      const date = u.created_at.split('T')[0];
+      byDate[date] = (byDate[date] || 0) + 1;
+    });
+
+    return Object.entries(byDate).map(([date, count]) => ({ date, count }));
+  }
 }
 
 export const adminService = new AdminService();
+

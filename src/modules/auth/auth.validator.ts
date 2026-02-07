@@ -37,6 +37,7 @@ export const sendOTPSchema = z.object({
     phone: phoneSchema.optional(),
     email: z.string().email('Invalid email address').optional(),
     purpose: otpPurposeSchema.default('login'),
+    sessionId: z.string().uuid('Invalid verification session ID').optional(),
   }).refine(
     (data) => data.phone || data.email,
     { message: 'Either phone or email is required' }
@@ -50,7 +51,7 @@ export const verifyOTPSchema = z.object({
     otp: otpSchema,
     purpose: otpPurposeSchema.default('login'),
     // Optional: allow setting a password during OTP login
-    password: passwordSchema,
+    password: passwordSchema.optional(),
   }).refine(
     (data) => data.phone || data.email,
     { message: 'Either phone or email is required' }
@@ -65,12 +66,12 @@ export const registerPatientSchema = z.object({
   body: z.object({
     phone: phoneSchema,
     otp: otpSchema,
-    fullName: z.string()
+    name: z.string()
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim(),
     email: emailSchema,
-    password: passwordSchema,
+    password: passwordSchema.optional(),
     gender: genderSchema.optional(),
     dateOfBirth: dateSchema.optional(),
   }),
@@ -81,58 +82,43 @@ export const registerHospitalSchema = z.object({
     // Admin user details
     phone: phoneSchema,
     otp: otpSchema,
-    fullName: z.string()
+    name: z.string()
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim(),
     email: emailSchema,
     password: passwordSchema.optional(),
-    
+
     // Hospital details
     hospital: z.object({
       name: z.string()
         .min(2, 'Hospital name must be at least 2 characters')
         .max(255, 'Hospital name must not exceed 255 characters')
         .trim(),
-      type: z.enum([
-        // Client-supported types
-        'multi_specialty',
-        'single_specialty',
-        'nursing_home',
-        'clinic',
-        'diagnostic_center',
-        'medical_college',
-        'primary_health',
-        // Additional types accepted by server
-        'super_specialty',
-        'general',
-        'dental_clinic',
-        'eye_hospital',
-        'maternity',
-        'pediatric',
-        'ayurvedic',
-        'homeopathy'
-      ]).optional(),
+      type: z.string().optional(), // Allow string for flexibility, validated against enum in DB/service
       registrationNumber: z.string()
         .min(5, 'Registration number must be at least 5 characters')
         .max(100, 'Registration number must not exceed 100 characters')
         .optional(),
       phone: phoneSchema,
       email: emailSchema.optional(),
-      addressLine1: z.string()
+      address: z.string()
         .min(5, 'Address must be at least 5 characters')
-        .max(255, 'Address must not exceed 255 characters'),
-      addressLine2: z.string()
-        .max(255, 'Address line 2 must not exceed 255 characters')
+        .max(255, 'Address must not exceed 255 characters')
         .optional(),
       city: z.string()
         .min(2, 'City must be at least 2 characters')
-        .max(100, 'City must not exceed 100 characters'),
+        .max(100, 'City must not exceed 100 characters')
+        .optional(),
       state: z.string()
         .min(2, 'State must be at least 2 characters')
-        .max(100, 'State must not exceed 100 characters'),
+        .max(100, 'State must not exceed 100 characters')
+        .optional(),
       pincode: z.string()
-        .regex(/^[1-9][0-9]{5}$/, 'Invalid pincode format'),
+        .regex(/^[1-9][0-9]{5}$/, 'Invalid pincode format')
+        .optional(),
+      landmark: z.string().max(255).optional().nullable(),
+      country: z.string().max(50).optional().default('India'),
       latitude: z.number()
         .min(-90, 'Latitude must be between -90 and 90')
         .max(90, 'Latitude must be between -90 and 90')
@@ -154,21 +140,10 @@ export const registerHospitalSchema = z.object({
 // Email/Password Login Schema
 // ============================================================================
 
-export const loginWithPasswordSchema = z.object({
+export const passwordLoginSchema = z.object({
   body: z.object({
     email: emailSchema,
     password: passwordSchema,
-  }),
-});
-
-// ============================================================================
-// Google OAuth Schema
-// ============================================================================
-
-export const googleOAuthSchema = z.object({
-  body: z.object({
-    idToken: z.string().min(1, 'ID token is required'),
-    deviceInfo: z.any().optional(),
   }),
 });
 
@@ -178,7 +153,7 @@ export const googleOAuthSchema = z.object({
 
 export const refreshTokenSchema = z.object({
   body: z.object({
-    refreshToken: z.string().min(1, 'Refresh token is required'),
+    refreshToken: z.string().optional(),
   }),
 });
 
@@ -188,7 +163,7 @@ export const refreshTokenSchema = z.object({
 
 export const updateProfileSchema = z.object({
   body: z.object({
-    fullName: z.string()
+    name: z.string()
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim()
@@ -291,6 +266,65 @@ export const revokeSessionSchema = z.object({
 });
 
 // ============================================================================
+// Multi-step Registration Schemas
+// ============================================================================
+
+/**
+ * Step 2: Complete Account Registration
+ * (Step 1 is handled by sendOTP)
+ */
+export const completeUserRegistrationSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    otp: otpSchema,
+    password: passwordSchema,
+    name: z.string()
+      .min(2, 'Name must be at least 2 characters')
+      .max(255, 'Name must not exceed 255 characters')
+      .trim(),
+    email: emailSchema,
+    role: z.enum(['patient', 'hospital', 'doctor']), // Only these roles can self-register
+  }),
+});
+
+/**
+ * Hospital Step 3: Base Profile
+ */
+export const registerHospitalProfileSchema = z.object({
+  body: z.object({
+    name: z.string().min(2).max(255),
+    type: z.string(),
+    description: z.string().max(2000).optional().nullable(),
+    phone: phoneSchema,
+    email: emailSchema,
+  }),
+});
+
+/**
+ * Hospital Step 4: Compliance
+ */
+export const registerHospitalComplianceSchema = z.object({
+  body: z.object({
+    registrationNumber: z.string().min(2).max(100),
+    gstin: z.string().max(20).optional().nullable(),
+    pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'Invalid PAN format'),
+  }),
+});
+
+/**
+ * Hospital Step 5: Address
+ */
+export const registerHospitalAddressSchema = z.object({
+  body: z.object({
+    address: z.string().min(5).max(255),
+    landmark: z.string().max(255).optional().nullable(),
+    city: z.string().min(2).max(100),
+    state: z.string().min(2).max(100),
+    pincode: z.string().regex(/^[1-9][0-9]{5}$/, 'Invalid pincode'),
+  }),
+});
+
+// ============================================================================
 // Type Exports
 // ============================================================================
 
@@ -298,8 +332,8 @@ export type SendOTPInput = z.infer<typeof sendOTPSchema>['body'];
 export type VerifyOTPInput = z.infer<typeof verifyOTPSchema>['body'];
 export type RegisterPatientInput = z.infer<typeof registerPatientSchema>['body'];
 export type RegisterHospitalInput = z.infer<typeof registerHospitalSchema>['body'];
-export type LoginWithPasswordInput = z.infer<typeof loginWithPasswordSchema>['body'];
-export type GoogleOAuthInput = z.infer<typeof googleOAuthSchema>['body'];
+export type LoginWithPasswordInput = z.infer<typeof passwordLoginSchema>['body'];
+
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>['body'];
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>['body'];
 export type ChangePhoneInput = z.infer<typeof changePhoneSchema>['body'];
@@ -307,3 +341,10 @@ export type ChangeEmailInput = z.infer<typeof changeEmailSchema>['body'];
 export type SetPasswordInput = z.infer<typeof setPasswordSchema>['body'];
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>['body'];
 export type RevokeSessionInput = z.infer<typeof revokeSessionSchema>['params'];
+
+// Multi-step types
+export type CompleteUserRegistrationInput = z.infer<typeof completeUserRegistrationSchema>['body'];
+export type RegisterHospitalProfileInput = z.infer<typeof registerHospitalProfileSchema>['body'];
+export type RegisterHospitalComplianceInput = z.infer<typeof registerHospitalComplianceSchema>['body'];
+export type RegisterHospitalAddressInput = z.infer<typeof registerHospitalAddressSchema>['body'];
+

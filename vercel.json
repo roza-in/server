@@ -1,0 +1,67 @@
+{
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "version": 2,
+    "buildCommand": "npm run build",
+    "installCommand": "npm install",
+    "outputDirectory": "dist",
+    "regions": [
+        "bom1"
+    ],
+    "git": {
+        "deploymentEnabled": {
+            "main": true,
+            "develop": true
+        }
+    },
+    "functions": {
+        "api/**/*.js": {
+            "runtime": "@vercel/node@3.0.0",
+            "maxDuration": 60
+        }
+    },
+    "routes": [
+        {
+            "src": "/api/(.*)",
+            "dest": "/api/index.js"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/api/index.js"
+        }
+    ],
+    "headers": [
+        {
+            "source": "/(.*)",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Credentials",
+                    "value": "true"
+                },
+                {
+                    "key": "Access-Control-Allow-Methods",
+                    "value": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                },
+                {
+                    "key": "Access-Control-Allow-Headers",
+                    "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization"
+                },
+                {
+                    "key": "X-Content-Type-Options",
+                    "value": "nosniff"
+                },
+                {
+                    "key": "X-Frame-Options",
+                    "value": "DENY"
+                },
+                {
+                    "key": "X-XSS-Protection",
+                    "value": "1; mode=block"
+                },
+                {
+                    "key": "Referrer-Policy",
+                    "value": "strict-origin-when-cross-origin"
+                }
+            ]
+        }
+    ]
+}

@@ -61,7 +61,7 @@ export const createDoctorSchema = z.object({
   body: z.object({
     user_id: uuidSchema.optional(),
     phone: phoneSchema.optional(),
-    full_name: z.string().min(1).max(255).optional(),
+    name: z.string().min(1).max(255).optional(),
     email: emailSchema.optional(),
     qualifications: z.string().max(1000).optional().nullable(),
     registrationNumber: medicalRegistrationSchema.optional().nullable(),
@@ -81,7 +81,7 @@ export const createDoctorSchema = z.object({
     profileImageUrl: z.string().url().optional().nullable(),
     languagesSpoken: z.array(z.string()).optional(),
   }).refine((v) => !!v.user_id || !!v.phone, { message: 'Either user_id or phone is required' })
-  .refine((v) => !!v.specializationId || !!v.specialization_id || (!!v.specialization && String(v.specialization).trim().length > 0), { message: 'Either specializationId/specialization_id or specialization text is required' }),
+    .refine((v) => !!v.specializationId || !!v.specialization_id || (!!v.specialization && String(v.specialization).trim().length > 0), { message: 'Either specializationId/specialization_id or specialization text is required' }),
 });
 
 // Get doctor availability schema
@@ -128,4 +128,5 @@ export type GetDoctorAvailabilityInput = z.infer<typeof getDoctorAvailabilitySch
 export type DoctorStatsInput = z.infer<typeof doctorStatsSchema>;
 export type UpdateDoctorStatusInput = z.infer<typeof updateDoctorStatusSchema>;
 export type CreateDoctorInput = z.infer<typeof createDoctorSchema>['body'];
+
 

@@ -1,6 +1,6 @@
-import { getSupabaseAdmin } from '../../config/db.js';
-import { logger } from '../../common/logger.js';
-import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors.js';
+import { supabaseAdmin } from '../../database/supabase-admin.js';
+import { logger } from '../../config/logger.js';
+import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import type {
   FamilyMember,
   FamilyMemberWithHealth,
@@ -35,7 +35,7 @@ import type {
  */
 class HealthRecordsService {
   private log = logger.child('HealthRecordsService');
-  private supabase = getSupabaseAdmin();
+  private supabase = supabaseAdmin;
 
   // ============================================================================
   // Family Members
@@ -62,8 +62,8 @@ class HealthRecordsService {
       throw new BadRequestError('Failed to create family member');
     }
 
-    this.log.info('Family member created', { userId, memberId: data.id });
-    return data;
+    this.log.info('Family member created', { userId, memberId: (data as any).id });
+    return data as unknown as FamilyMember;
   }
 
   /**
@@ -93,12 +93,12 @@ class HealthRecordsService {
     ]);
 
     return {
-      ...data,
+      ...(data as unknown as FamilyMember),
       latest_vitals: vitals,
       active_medications: medications,
       upcoming_reminders: reminders,
       recent_documents: documents.documents,
-    };
+    } as FamilyMemberWithHealth;
   }
 
   /**
@@ -110,13 +110,13 @@ class HealthRecordsService {
       .select('*')
       .eq('user_id', userId)
       .order('is_primary', { ascending: false })
-      .order('full_name');
+      .order('name');
 
     if (error) {
       throw new BadRequestError('Failed to fetch family members');
     }
 
-    return data || [];
+    return (data || []) as unknown as FamilyMember[];
   }
 
   /**
@@ -142,7 +142,7 @@ class HealthRecordsService {
       throw new BadRequestError('Failed to update family member');
     }
 
-    return data;
+    return data as unknown as FamilyMember;
   }
 
   /**
@@ -212,10 +212,10 @@ class HealthRecordsService {
       .from('health_documents')
       .select(`
         *,
-        family_member:family_members(id, full_name),
+        family_member:family_members(id, name),
         appointment:appointments(
-          id, booking_id, appointment_date,
-          doctor:doctors(users(full_name))
+          id, appointment_number, scheduled_date, scheduled_start,
+          doctor:doctors(users(name))
         )
       `)
       .eq('id', documentId)
@@ -230,11 +230,11 @@ class HealthRecordsService {
       ...data,
       appointment: data.appointment
         ? {
-            id: data.appointment.id,
-            booking_id: data.appointment.booking_id,
-            appointment_date: data.appointment.appointment_date,
-            doctor_name: data.appointment.doctor?.users?.full_name || null,
-          }
+          id: data.appointment.id,
+          booking_id: data.appointment.appointment_number,
+          appointment_date: data.appointment.scheduled_date,
+          doctor_name: data.appointment.doctor?.users?.name || null,
+        }
         : null,
     };
   }
@@ -267,7 +267,16 @@ class HealthRecordsService {
     if (appointment_id) query = query.eq('appointment_id', appointment_id);
     if (date_from) query = query.gte('created_at', date_from);
     if (date_to) query = query.lte('created_at', date_to);
-    if (search) query = query.ilike('title', `%${search}%`);
+    if (search) {
+      // SECURITY: Sanitize search input to prevent PostgREST filter injection
+      const sanitizedSearch = search
+        .replace(/[%_(),.]/g, '') // Remove special PostgREST filter characters
+        .replace(/'/g, "''")       // Escape single quotes
+        .substring(0, 100);        // Limit length to prevent abuse
+      if (sanitizedSearch.length > 0) {
+        query = query.ilike('title', `%${sanitizedSearch}%`);
+      }
+    }
 
     if (document_type) {
       if (Array.isArray(document_type)) {
@@ -818,7 +827,7 @@ class HealthRecordsService {
     // Get user details
     const { data: user } = await this.supabase
       .from('users')
-      .select('id, full_name, date_of_birth, blood_group')
+      .select('id, name, date_of_birth, blood_group')
       .eq('id', userId)
       .single();
 
@@ -1082,3 +1091,4 @@ class HealthRecordsService {
 }
 
 export const healthRecordsService = new HealthRecordsService();
+

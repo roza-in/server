@@ -10,11 +10,23 @@ import { uuidSchema, consultationTypeSchema, appointmentStatusSchema } from '../
 export const bookAppointmentSchema = z.object({
   body: z.object({
     doctorId: uuidSchema,
+    hospitalId: uuidSchema.optional().or(z.literal('')).transform(val => val || undefined),
     appointmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     startTime: z.string().regex(/^\d{2}:\d{2}$/),
+    endTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
     consultationType: consultationTypeSchema,
-    symptoms: z.string().max(1000).optional(),
+    familyMemberId: uuidSchema.optional(),
+    patientName: z.string().max(100).optional(),
+    patientPhone: z.string().max(20).optional(),
+    patientAge: z.number().int().min(0).max(150).optional(),
+    patientGender: z.enum(['male', 'female', 'other']).optional(),
+    chiefComplaint: z.string().max(500).optional(),
+    symptoms: z.union([
+      z.string().max(1000),
+      z.array(z.string()).transform(arr => arr.join(', ')),
+    ]).optional(),
     notes: z.string().max(500).optional(),
+    idempotencyKey: z.string().optional(),
   }),
 });
 
@@ -33,6 +45,8 @@ export const listAppointmentsSchema = z.object({
     hospitalId: uuidSchema.optional(),
     status: z.union([
       appointmentStatusSchema,
+      z.array(appointmentStatusSchema),
+      z.array(z.string()),
       z.string().transform(val => val.split(',') as any),
     ]).optional(),
     consultationType: consultationTypeSchema.optional(),
@@ -114,6 +128,25 @@ export const rateAppointmentSchema = z.object({
   }),
 });
 
+// Fee breakdown schema
+export const feeBreakdownSchema = z.object({
+  query: z.object({
+    doctorId: uuidSchema,
+    consultationType: consultationTypeSchema,
+    hospitalId: uuidSchema.optional(),
+  }),
+});
+
+// Check availability schema
+export const checkAvailabilitySchema = z.object({
+  query: z.object({
+    doctorId: uuidSchema,
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    consultationType: consultationTypeSchema.optional(),
+    hospitalId: uuidSchema.optional(),
+  }),
+});
+
 // Export types
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>['body'];
 export type GetAppointmentInput = z.infer<typeof getAppointmentSchema>['params'];
@@ -125,4 +158,5 @@ export type CheckInInput = z.infer<typeof checkInSchema>['params'];
 export type StartConsultationInput = z.infer<typeof startConsultationSchema>['params'];
 export type CompleteConsultationInput = z.infer<typeof completeConsultationSchema>;
 export type RateAppointmentInput = z.infer<typeof rateAppointmentSchema>;
+
 

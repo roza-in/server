@@ -1,4 +1,4 @@
-import type { UserRole, OTPPurpose, Hospital, Doctor } from '../../types/database.types.js';
+import type { UserRole, OTPPurpose, Hospital, Doctor, Gender } from '../../types/database.types.js';
 
 /**
  * Auth Module Types
@@ -18,14 +18,25 @@ export interface UserProfile {
   id: string;
   phone: string;
   email: string | null;
-  fullName: string | null;
+  name: string | null;
   role: UserRole;
   avatarUrl: string | null;
+  profile_picture_url?: string | null;
+  profilePictureUrl?: string | null;
   phoneVerified: boolean;
   emailVerified: boolean;
+  isActive: boolean;
+  isBlocked: boolean;
+  blockedReason?: string | null;
+  gender?: Gender | null;
+  dateOfBirth?: string | null;
   hospitalId?: string;
   doctorId?: string;
+  doctor?: Doctor | null;
+  hospital?: Hospital | null;
+  lastLoginAt?: string | null;
   createdAt: string;
+  // For compatibility with legacy code or specific UI needs
   doctors?: Doctor[];
   hospitals?: Hospital[];
 }
@@ -96,17 +107,17 @@ export interface WhatsAppOTPVerifyInput {
 export interface RegisterPatientData {
   phone: string;
   otp: string;
-  fullName: string;
+  name: string;
   email?: string;
   password?: string;
-  gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  gender?: Gender;
   dateOfBirth?: string;
 }
 
 export interface RegisterHospitalData {
   phone: string;
   otp: string;
-  fullName: string;
+  name: string;
   email?: string;
   password?: string;
   hospital: {
@@ -115,11 +126,12 @@ export interface RegisterHospitalData {
     registrationNumber?: string;
     phone: string;
     email?: string;
-    addressLine1: string;
-    addressLine2?: string;
+    address: string;
     city: string;
     state: string;
     pincode: string;
+    landmark?: string;
+    country?: string;
     latitude?: number;
     longitude?: number;
     about?: string;
@@ -172,3 +184,4 @@ export interface DeviceInfo {
   browser?: string;
   browserVersion?: string;
 }
+

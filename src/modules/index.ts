@@ -5,17 +5,18 @@
 
 // Auth
 export { authService } from './auth/auth.service.js';
-export { sendOTP, verifyOTP, refreshToken, logout, getMe, registerPatient, registerHospital, googleOAuth, logoutAll, updateProfile } from './auth/auth.controller.js';
+export { authController } from './auth/auth.controller.js';
+
+
 
 // Hospitals
 export { hospitalService } from './hospitals/hospital.service.js';
-export { hospitalRepository } from './hospitals/hospital.repository.js';
-export { 
-  getHospital, 
+export {
+  getHospital,
   getHospitalBySlug,
-  updateHospital, 
-  listHospitals, 
-  verifyHospital, 
+  updateHospital,
+  listHospitals,
+  verifyHospital,
   getMyHospital,
   addDoctor,
   getHospitalDoctors,
@@ -24,12 +25,11 @@ export {
 
 // Doctors
 export { doctorService } from './doctors/doctor.service.js';
-export { doctorRepository } from './doctors/doctor.repository.js';
-export { 
-  getDoctor, 
+export {
+  getDoctor,
   getDoctorProfile,
-  updateDoctor, 
-  listDoctors, 
+  updateDoctor,
+  listDoctors,
   getMyDoctorProfile,
   updateDoctorStatus,
   getDoctorAvailability,
@@ -38,74 +38,81 @@ export {
 
 // Appointments
 export { appointmentService } from './appointments/appointment.service.js';
-export { appointmentRepository } from './appointments/appointment.repository.js';
-export { 
-  bookAppointment, 
-  getAppointment, 
-  listAppointments, 
-  updateAppointmentStatus, 
-  cancelAppointment, 
+export {
+  bookAppointment,
+  getAppointment,
+  listAppointments,
+  updateAppointmentStatus,
+  cancelAppointment,
   rescheduleAppointment,
   getTodayAppointments,
-  checkInAppointment,
-  startConsultation as startAppointmentConsultation,
-  completeConsultation,
   markNoShow,
   rateAppointment
 } from './appointments/appointment.controller.js';
 
 // Schedules
 export { scheduleService } from './schedules/schedule.service.js';
-export { 
-  createSchedule, 
-  updateSchedule, 
-  getDoctorSchedules, 
-  deleteSchedule, 
-  createOverride, 
+export { slotService } from './schedules/slot.service.js';
+export {
+  createSchedule,
+  updateSchedule,
+  getDoctorSchedules,
+  deleteSchedule,
+  createOverride,
   getOverrides,
   bulkCreateSchedules,
-  deleteOverride
+  deleteOverride,
+  getAvailableSlots,
+  regenerateSlots,
+  generateAllSlots,
 } from './schedules/schedule.controller.js';
 
 // Payments
 export { paymentService } from './payments/payment.service.js';
-export { 
-  createOrder, 
-  verifyPayment, 
-  getPayment, 
-  listPayments, 
+export {
+  createOrder,
+  verifyPayment,
+  getPayment,
+  listPayments,
   refundPayment,
   getPaymentStats,
-  handleWebhook 
+  handleWebhook
 } from './payments/payment.controller.js';
 
 // Consultations
 export { consultationService } from './consultations/consultation.service.js';
-export { 
+export {
   startConsultation,
-  endConsultation, 
-  getConsultation, 
-  listConsultations, 
-  createPrescription, 
-  getPatientPrescriptions,
-  getPrescription,
+  endConsultation,
+  getConsultation,
+  listConsultations,
   getVideoToken
 } from './consultations/consultation.controller.js';
 
+// Prescriptions
+export { prescriptionService } from './prescriptions/prescription.service.js';
+export {
+  createPrescription,
+  getPrescription,
+  listPrescriptions,
+  getMyPrescriptions,
+  signPrescription
+} from './prescriptions/index.js';
+
 // Notifications
 export { notificationService } from './notifications/notification.service.js';
-export { 
-  sendNotification, 
-  sendBulkNotification, 
+export {
+  sendNotification,
+  sendBulkNotification,
   listNotifications,
   getNotification,
   markAsRead,
   markAllAsRead,
   getUnreadCount,
-  getPreferences, 
-  updatePreferences, 
-  registerDevice, 
-  unregisterDevice 
+  getPreferences,
+  updatePreferences,
+  registerDevice,
+  unregisterDevice
 } from './notifications/notification.controller.js';
 
 // Health Records
@@ -147,3 +154,17 @@ export {
   getHealthSummary,
   getFamilyHealthSummary
 } from './health-records/health-records.controller.js';
+
+// Reception
+export { receptionService } from './reception/reception.service.js';
+export {
+  getQueue,
+  checkInPatient,
+  markNoShow as markNoShowReception,
+  createWalkInBooking,
+  searchPatients,
+  registerPatient,
+  recordCashPayment,
+} from './reception/reception.controller.js';
+
+

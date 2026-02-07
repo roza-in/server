@@ -1,27 +1,34 @@
-import { getSupabaseAdmin } from '../../config/db.js';
-import { logger } from '../../common/logger.js';
-import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors.js';
-import type { SubscriptionTier, VerificationStatus } from '../../types/database.types.js';
-import type { HospitalFilters, HospitalListResponse, HospitalStats, HospitalDashboard, UpdateHospitalInput, UpdatePaymentSettingsInput, HospitalListItem } from './hospital.types.js';
+import { logger } from '../../config/logger.js';
+import { NotFoundError, ForbiddenError, BadRequestError, ConflictError } from '../../common/errors/index.js';
+import bcrypt from 'bcrypt';
+import type {
+  HospitalFilters,
+  HospitalListResponse,
+  HospitalStats,
+  HospitalDashboard,
+  UpdateHospitalInput,
+  UpdatePaymentSettingsInput,
+  HospitalListItem
+} from './hospital.types.js';
+import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
+import { userRepository } from '../../database/repositories/user.repo.js';
+import { doctorRepository } from '../../database/repositories/doctor.repo.js';
+import type { HospitalType, SubscriptionTier, VerificationStatus } from '../../types/database.types.js';
 
 /**
  * Hospital Service 
+ * Orchestrates hospital-related business logic and data access via repositories
  */
 class HospitalService {
-  private logger = logger.child('HospitalService');
-  private supabase = getSupabaseAdmin();
+  private log = logger.child('HospitalService');
+  private saltRounds = 10;
 
   /**
    * Get hospital by ID
    */
   async getById(hospitalId: string): Promise<any> {
-    const { data: hospital, error } = await this.supabase
-      .from('hospitals')
-      .select(`*, admin:users!hospitals_admin_user_id_fkey(id, full_name, email, phone, avatar_url)`)
-      .eq('id', hospitalId)
-      .single();
-
-    if (error || !hospital) {
+    const hospital = await hospitalRepository.findWithRelations(hospitalId);
+    if (!hospital) {
       throw new NotFoundError('Hospital not found');
     }
     return hospital;
@@ -31,95 +38,62 @@ class HospitalService {
    * Get hospital by slug (public profile)
    */
   async getBySlug(slug: string): Promise<any> {
-    const { data: hospital, error } = await this.supabase
-      .from('hospitals')
-      .select('*')
-      .eq('slug', slug)
-      .eq('is_active', true)
-      .single();
-
-    if (error || !hospital) {
+    const hospital = await hospitalRepository.findBySlugWithDoctors(slug);
+    if (!hospital) {
       throw new NotFoundError('Hospital not found');
     }
-
-    // Get active doctors with their schedules
-    const { data: doctors } = await this.supabase
-      .from('doctors')
-      .select(`
-        *,
-        user:users!doctors_user_id_fkey(id, full_name, avatar_url),
-        specialization:specializations(id, name, display_name)
-      `)
-      .eq('hospital_id', (hospital as any).id)
-      .eq('is_active', true)
-      .eq('verification_status', 'verified');
-
-    const hp = hospital as any;
-    return {
-      ...(hp || {}),
-      doctors: (doctors || []) as any[],
-    };
+    return hospital;
   }
 
   /**
    * List hospitals with filters (public)
    */
   async list(filters: HospitalFilters): Promise<HospitalListResponse> {
-    const page = filters.page || 1;
-    const limit = Math.min(filters.limit || 20, 100);
-    const offset = (page - 1) * limit;
+    try {
+      const result = await hospitalRepository.findMany(filters);
+      const page = filters.page || 1;
+      const limit = Math.min(filters.limit || 20, 100);
 
-    let query = this.supabase
-      .from('hospitals')
-      .select('*', { count: 'exact' })
-      .eq('is_active', true)
-      .eq('verification_status', 'verified');
-
-    // Apply filters
-    if (filters.search) {
-      query = query.or(`name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`);
-    }
-    if (filters.city) {
-      query = query.ilike('address->>city', `%${filters.city}%`);
-    }
-    if (filters.state) {
-      query = query.ilike('address->>state', `%${filters.state}%`);
-    }
-    if (filters.hospital_type) {
-      query = (query as any).eq('hospital_type', filters.hospital_type as any);
-    }
-    if (filters.emergency_24x7) {
-      query = (query as any).eq('emergency_24x7', true);
-    }
-    if (filters.min_rating) {
-      query = (query as any).gte('rating', filters.min_rating);
-    }
-
-    // Sorting
-    const sortBy = filters.sort_by || 'name';
-    const sortOrder = filters.sort_order === 'desc' ? false : true;
-    query = query.order(sortBy, { ascending: sortOrder });
-
-    // Pagination
-    query = query.range(offset, offset + limit - 1);
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      this.logger.error('Failed to fetch hospitals', error);
+      return {
+        hospitals: result.data.map((h: any) => ({
+          id: h.id,
+          name: h.name,
+          slug: h.slug,
+          hospital_type: h.type as HospitalType,
+          city: h.city,
+          state: h.state,
+          logo_url: h.logo_url,
+          cover_image_url: h.cover_image_url,
+          specializations: h.specializations,
+          subscription_tier: h.subscription_tier as SubscriptionTier,
+          verification_status: h.verification_status as VerificationStatus,
+          rating: h.rating,
+          total_ratings: h.total_ratings || 0,
+          total_consultations: h.total_consultations || 0,
+          emergency_24x7: h.emergency_24x7 || false,
+          is_active: h.is_active || false,
+        })),
+        total: result.total,
+        page,
+        limit,
+        totalPages: Math.ceil(result.total / limit),
+        hasMore: (page * limit) < result.total,
+      };
+    } catch (error) {
+      this.log.error('Failed to fetch hospitals', error);
       throw new BadRequestError('Failed to fetch hospitals');
     }
+  }
 
-    const total = count || 0;
-
-    return {
-      hospitals: (data || []) as HospitalListItem[],
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-      hasMore: offset + limit < total,
-    };
+  /**
+   * Get hospital by user ID (admin)
+   */
+  async getByUserId(userId: string): Promise<any> {
+    const hospital = await hospitalRepository.findByUserId(userId);
+    if (!hospital) {
+      return null;
+    }
+    return hospital;
   }
 
   /**
@@ -127,8 +101,12 @@ class HospitalService {
    */
   async update(hospitalId: string, userId: string, data: UpdateHospitalInput, isAdmin = false): Promise<any> {
     // Verify ownership (allow admins)
-    const hospital = await this.getById(hospitalId);
-    if (!isAdmin && hospital?.admin_user_id !== userId) {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) {
+      throw new NotFoundError('Hospital not found');
+    }
+
+    if (!isAdmin && hospital.admin_user_id !== userId) {
       throw new ForbiddenError('You do not have permission to update this hospital');
     }
 
@@ -136,32 +114,26 @@ class HospitalService {
       updated_at: new Date().toISOString(),
     };
 
-    // Map input to database columns
+    // Map input to database columns (Sync with HospitalRepository fields)
     const fieldMappings: Record<string, string> = {
       name: 'name',
       tagline: 'tagline',
       description: 'description',
       logo_url: 'logo_url',
       cover_image_url: 'cover_image_url',
-      gallery_urls: 'gallery_urls',
-      // support both snake_case (server) and camelCase (client)
       registration_number: 'registration_number',
-      registrationNumber: 'registration_number',
       license_number: 'license_number',
-      licenseNumber: 'license_number',
       accreditations: 'accreditations',
       established_year: 'established_year',
       total_beds: 'total_beds',
       icu_beds: 'icu_beds',
       operating_theaters: 'operating_theaters',
-      address: 'address',
-      contact_phone: 'contact_phone',
-      contact_email: 'contact_email',
-      website_url: 'website_url',
+      contact_phone: 'phone',
+      contact_email: 'email',
+      website_url: 'website',
       emergency_phone: 'emergency_phone',
-      facilities: 'facilities',
+      facilities: 'amenities',
       specializations: 'specializations',
-      // Compliance identifiers
       gstin: 'gstin',
       pan: 'pan',
       insurance_accepted: 'insurance_accepted',
@@ -173,22 +145,15 @@ class HospitalService {
       ambulance_service: 'ambulance_service',
       parking_available: 'parking_available',
       cafeteria_available: 'cafeteria_available',
-      // SEO / meta (DB columns are `meta_title` and `meta_description`)
       meta_title: 'meta_title',
       meta_description: 'meta_description',
-      // Flags and verification fields
-      is_active: 'is_active',
-      is_featured: 'is_featured',
-      verification_status: 'verification_status',
-      is_verified: 'is_verified',
-      verified_at: 'verified_at',
-      verified_by: 'verified_by',
+      address: 'address',
+      landmark: 'landmark',
+      city: 'city',
+      state: 'state',
+      pincode: 'pincode',
+      country: 'country',
     };
-
-    // Support alternate phone field from client
-    if ((data as any).alternate_phone !== undefined) {
-      updateData.alternate_phone = (data as any).alternate_phone;
-    }
 
     for (const [inputKey, dbKey] of Object.entries(fieldMappings)) {
       if ((data as any)[inputKey] !== undefined) {
@@ -196,60 +161,122 @@ class HospitalService {
       }
     }
 
-    if ((data as any).facilities !== undefined) {
-      updateData.amenities = (data as any).facilities;
-    }
-    if ((data as any).amenities !== undefined) {
-      updateData.amenities = (data as any).amenities;
-    }
-
-    // Website may be sent as `website`, `websiteUrl` or `website_url`
-    if ((data as any).website !== undefined) updateData.website = (data as any).website;
-    if ((data as any).websiteUrl !== undefined) updateData.website = (data as any).websiteUrl;
-    if ((data as any).website_url !== undefined) updateData.website = (data as any).website_url;
-
-    // Phone may be sent as `phone` or `contact_phone`
-    if ((data as any).phone !== undefined) updateData.phone = (data as any).phone;
-    if ((data as any).contact_phone !== undefined) updateData.phone = (data as any).contact_phone;
-
-    // Images/gallery
-    if ((data as any).images !== undefined) updateData.images = (data as any).images;
-    if ((data as any).gallery_urls !== undefined) updateData.images = (data as any).gallery_urls;
-
-    // Beds: accept both camelCase and snake_case
-    if ((data as any).totalBeds !== undefined) updateData.bed_count = (data as any).totalBeds;
-    if ((data as any).bed_count !== undefined) updateData.bed_count = (data as any).bed_count;
-
-    // Accept legacy key `specialties` from some clients
-    if ((data as any).specialties !== undefined) {
-      updateData.specializations = (data as any).specialties;
+    // Handle location JSONB
+    if (data.latitude && data.longitude) {
+      updateData.location = {
+        type: 'Point',
+        coordinates: [data.longitude, data.latitude]
+      };
     }
 
-    
-    const { data: updated, error } = await this.supabase
-      .from('hospitals')
-      .update(updateData)
-      .eq('id', hospitalId)
-      .select()
-      .single();
+    // Legacy/Alternate field support
+    if ((data as any).specialties) updateData.specializations = (data as any).specialties;
+    if ((data as any).amenities) updateData.amenities = (data as any).amenities;
+    if ((data as any).website) updateData.website = (data as any).website;
+    if ((data as any).phone) updateData.phone = (data as any).phone;
+    if ((data as any).bed_count) updateData.bed_count = (data as any).bed_count;
+    if ((data as any).totalBeds) updateData.bed_count = (data as any).totalBeds;
 
-    if (error || !updated) {
-      this.logger.error('Failed to update hospital', error);
+    // Bank Details JSONB
+    if ((data as any).bankAccountName || (data as any).bankAccountNumber || (data as any).bankIfsc || (data as any).upiId) {
+      const existingDetails = (hospital as any).bank_details || {};
+      updateData.bank_details = {
+        ...existingDetails,
+        account_name: (data as any).bankAccountName ?? existingDetails.account_name,
+        account_number: (data as any).bankAccountNumber ?? existingDetails.account_number,
+        ifsc: (data as any).bankIfsc ?? existingDetails.ifsc,
+        bank_branch: (data as any).bankBranch ?? existingDetails.bank_branch,
+        upi_id: (data as any).upiId ?? existingDetails.upi_id,
+      };
+    }
+
+    try {
+      return await hospitalRepository.update(hospitalId, updateData);
+    } catch (error) {
+      this.log.error('Failed to update hospital', error);
       throw new BadRequestError('Failed to update hospital');
     }
+  }
 
-    return updated as any;
+  /**
+   * Get hospital patients
+   */
+  async getPatients(hospitalId: string, filters: any = {}) {
+    try {
+      const result = await hospitalRepository.findPatients(hospitalId, filters);
+      return {
+        patients: result.patients,
+        total: result.total,
+        page: filters.page || 1,
+        limit: filters.limit || 20
+      };
+    } catch (error) {
+      this.log.error('Failed to fetch patients', error);
+      throw new BadRequestError('Failed to fetch patients');
+    }
+  }
+
+  /**
+   * Get hospital appointments
+   */
+  async getAppointments(hospitalId: string, filters: any = {}) {
+    try {
+      const result = await hospitalRepository.findAppointments(hospitalId, filters);
+      return {
+        appointments: result.appointments,
+        total: result.total,
+        page: filters.page || 1,
+        limit: filters.limit || 20
+      };
+    } catch (error) {
+      this.log.error('Failed to fetch appointments', error);
+      throw new BadRequestError('Failed to fetch appointments');
+    }
+  }
+
+  /**
+   * Get hospital payments
+   */
+  async getPayments(hospitalId: string, filters: any = {}) {
+    try {
+      const result = await hospitalRepository.findPayments(hospitalId, filters);
+      return {
+        payments: result.payments,
+        total: result.total,
+        page: filters.page || 1,
+        limit: filters.limit || 20
+      };
+    } catch (error) {
+      this.log.error('Failed to fetch payments', error);
+      throw new BadRequestError('Failed to fetch payments');
+    }
+  }
+
+  /**
+   * Get hospital invoices
+   */
+  async getInvoices(hospitalId: string, filters: any = {}) {
+    try {
+      const result = await hospitalRepository.findInvoices(hospitalId, filters);
+      return {
+        invoices: result.invoices,
+        total: result.total,
+        page: filters.page || 1,
+        limit: filters.limit || 20
+      };
+    } catch (error) {
+      this.log.error('Failed to fetch invoices', error);
+      throw new BadRequestError('Failed to fetch invoices');
+    }
   }
 
   /**
    * Update payment settings
    */
-  async updatePaymentSettings(
-    hospitalId: string,
-    userId: string,
-    data: UpdatePaymentSettingsInput
-  ): Promise<any> {
-    const hospital = await this.getById(hospitalId);
+  async updatePaymentSettings(hospitalId: string, userId: string, data: UpdatePaymentSettingsInput): Promise<any> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+
     if (hospital.admin_user_id !== userId) {
       throw new ForbiddenError('You do not have permission to update payment settings');
     }
@@ -259,74 +286,50 @@ class HospitalService {
       updated_at: new Date().toISOString(),
     };
 
-    if (data.platform_fee_online !== undefined) {
-      updateData.platform_fee_online = data.platform_fee_online;
-    }
-    if (data.platform_fee_in_person !== undefined) {
-      updateData.platform_fee_in_person = data.platform_fee_in_person;
-    }
-    if (data.platform_fee_walk_in !== undefined) {
-      updateData.platform_fee_walk_in = data.platform_fee_walk_in;
-    }
-    if (data.auto_settlement !== undefined) {
-      updateData.auto_settlement = data.auto_settlement;
-    }
-    if (data.settlement_frequency !== undefined) {
-      updateData.settlement_frequency = data.settlement_frequency;
-    }
-    if (data.bank_account_name !== undefined) {
-      updateData.bank_account_name = data.bank_account_name;
-    }
-    if (data.bank_account_number !== undefined) {
-      updateData.bank_account_number = data.bank_account_number;
-    }
-    if (data.bank_ifsc !== undefined) {
-      updateData.bank_ifsc = data.bank_ifsc;
-    }
-    if (data.bank_branch !== undefined) {
-      updateData.bank_branch = data.bank_branch;
-    }
-    if (data.upi_id !== undefined) {
-      updateData.upi_id = data.upi_id;
-    }
-    if (data.gstin !== undefined) {
-      updateData.gstin = data.gstin;
-    }
-    if (data.pan !== undefined) {
-      updateData.pan = data.pan;
-    }
+    if (data.platform_fee_online !== undefined) updateData.platform_fee_online = data.platform_fee_online;
+    if (data.platform_fee_in_person !== undefined) updateData.platform_fee_in_person = data.platform_fee_in_person;
+    if (data.platform_fee_walk_in !== undefined) updateData.platform_fee_walk_in = data.platform_fee_walk_in;
+    if (data.auto_settlement !== undefined) updateData.auto_settlement = data.auto_settlement;
+    if (data.settlement_frequency !== undefined) updateData.settlement_frequency = data.settlement_frequency;
 
-    const { data: updated, error } = await this.supabase
-      .from('hospitals')
-      .update(updateData)
-      .eq('id', hospitalId)
-      .select()
-      .single();
+    // Bank details within updatePaymentSettings might map to the same JSONB if needed, 
+    // but the original code seemed to update flat columns or a mix.
+    // Consistent with update() method:
+    if (data.bank_account_name) updateData.bank_account_name = data.bank_account_name;
+    if (data.bank_account_number) updateData.bank_account_number = data.bank_account_number;
+    if (data.bank_ifsc) updateData.bank_ifsc = data.bank_ifsc;
+    if (data.bank_branch) updateData.bank_branch = data.bank_branch;
+    if (data.upi_id) updateData.upi_id = data.upi_id;
+    if (data.gstin) updateData.gstin = data.gstin;
+    if (data.pan) updateData.pan = data.pan;
 
-    if (error || !updated) {
+    try {
+      return await hospitalRepository.update(hospitalId, updateData);
+    } catch (error) {
+      this.log.error('Failed to update payment settings', error);
       throw new BadRequestError('Failed to update payment settings');
     }
-
-    return updated as any;
   }
-
-  // =================================================================
-  // Hospital Dashboard & Stats
-  // =================================================================
 
   /**
    * Get hospital dashboard data
    */
   async getDashboard(hospitalId: string, userId: string): Promise<HospitalDashboard> {
-    const hospital = await this.getById(hospitalId);
+    const hospital = await hospitalRepository.findWithRelations(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+
     if (hospital.admin_user_id !== userId) {
       throw new ForbiddenError('Access denied');
     }
 
+    if (!hospital.is_active) {
+      throw new ForbiddenError('This hospital account has been deactivated. Please contact support.');
+    }
+
     const [stats, recentAppointments, topDoctors] = await Promise.all([
-      this.getStats(hospitalId),
-      this.getRecentAppointments(hospitalId),
-      this.getTopDoctors(hospitalId),
+      hospitalRepository.getStats(hospitalId),
+      hospitalRepository.getRecentAppointments(hospitalId),
+      hospitalRepository.getTopDoctors(hospitalId),
     ]);
 
     return {
@@ -340,377 +343,173 @@ class HospitalService {
   }
 
   /**
-   * Get hospital statistics
+   * Get hospital statistics (Proxy to repository)
    */
-  async getStats(hospitalId: string): Promise<HospitalStats> {
-    const today = new Date().toISOString().split('T')[0];
-    const monthStart = new Date(new Date().setDate(1)).toISOString().split('T')[0];
+  async getStats(hospitalId: string, userId: string, period?: string): Promise<HospitalStats> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
 
-    // Get doctor counts
-    const { count: totalDoctors } = await this.supabase
-      .from('doctors')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId);
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('Access denied');
+    }
 
-    const { count: activeDoctors } = await this.supabase
-      .from('doctors')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId)
-      .eq('is_active', true);
+    if (!hospital.is_active) {
+      throw new ForbiddenError('This hospital account has been deactivated. Please contact support.');
+    }
 
-    // Get appointment counts
-    const { count: totalAppointments } = await this.supabase
-      .from('appointments')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId);
-
-    const { count: todayAppointments } = await this.supabase
-      .from('appointments')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId)
-      .eq('appointment_date', today);
-
-    const { count: completedAppointments } = await this.supabase
-      .from('appointments')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId)
-      .eq('status', 'completed');
-
-    const { count: cancelledAppointments } = await this.supabase
-      .from('appointments')
-      .select('*', { count: 'exact', head: true })
-      .eq('hospital_id', hospitalId)
-      .eq('status', 'cancelled');
-
-    // Get revenue data (select only existing column and cast results to any[])
-    const { data: revenueData } = await this.supabase
-      .from('payments')
-      .select('hospital_payout')
-      .eq('hospital_id', hospitalId)
-      .eq('status', 'completed');
-
-    const totalRevenue = ((revenueData as any[]) || []).reduce((sum, p) => sum + (p.hospital_payout || 0), 0);
-
-    const { data: monthlyRevenueData } = await this.supabase
-      .from('payments')
-      .select('hospital_payout')
-      .eq('hospital_id', hospitalId)
-      .eq('status', 'completed')
-      .gte('paid_at', monthStart);
-
-    const monthlyRevenue = ((monthlyRevenueData as any[]) || []).reduce((sum, p) => sum + (p.hospital_payout || 0), 0) || 0;
-
-    // Get hospital rating
-    const { data: hospitalData } = await this.supabase
-      .from('hospitals')
-      .select('rating, total_ratings')
-      .eq('id', hospitalId)
-      .single();
-
-    return {
-      totalDoctors: totalDoctors || 0,
-      activeDoctors: activeDoctors || 0,
-      totalPatients: 0, // Would need a patients table query
-      totalAppointments: totalAppointments || 0,
-      pendingAppointments: 0,
-      completedAppointments: completedAppointments || 0,
-      cancelledAppointments: cancelledAppointments || 0,
-      todayAppointments: todayAppointments || 0,
-      upcomingAppointments: 0,
-      totalRevenue,
-      monthlyRevenue,
-      pendingSettlements: 0,
-      platformFeesOwed: 0,
-      rating: hospitalData?.rating || null,
-      totalRatings: hospitalData?.total_ratings || 0,
-    };
+    return await hospitalRepository.getStats(hospitalId);
   }
-
-  /**
-   * Get recent appointments
-   */
-  private async getRecentAppointments(hospitalId: string) {
-    const { data } = await this.supabase
-      .from('appointments')
-      .select(`
-        id,
-        booking_id,
-        appointment_date,
-        start_time,
-        consultation_type,
-        status,
-        patient:users!appointments_patient_id_fkey(full_name),
-        doctor:doctors!appointments_doctor_id_fkey(
-          user:users!doctors_user_id_fkey(full_name)
-        )
-      `)
-      .eq('hospital_id', hospitalId)
-      .order('created_at', { ascending: false })
-      .limit(10);
-
-    return (data || []).map((a: any) => ({
-      id: a.id,
-      booking_id: a.booking_id,
-      patient_name: a.patient?.full_name || 'Unknown',
-      doctor_name: a.doctor?.user?.full_name || 'Unknown',
-      appointment_date: a.appointment_date,
-      start_time: a.start_time,
-      consultation_type: a.consultation_type,
-      status: a.status,
-      payment_status: 'completed',
-    }));
-  }
-
-  /**
-   * Get top performing doctors
-   */
-  private async getTopDoctors(hospitalId: string) {
-    const { data } = await this.supabase
-      .from('doctors')
-      .select(`
-        id,
-        total_consultations,
-        rating,
-        total_ratings,
-        user:users!doctors_user_id_fkey(full_name),
-        specialization:specializations(display_name)
-      `)
-      .eq('hospital_id', hospitalId)
-      .eq('is_active', true)
-      .order('total_consultations', { ascending: false })
-      .limit(5);
-
-    return (data || []).map((d: any) => ({
-      id: d.id,
-      name: d.user?.full_name || 'Unknown',
-      specialization: d.specialization?.display_name || 'General',
-      total_consultations: d.total_consultations || 0,
-      rating: d.rating,
-      total_ratings: d.total_ratings || 0,
-      revenue_generated: 0,
-    }));
-  }
-
-  // =================================================================
-  // Doctor Management
-  // =================================================================
 
   /**
    * Get hospital doctors
    */
   async getDoctors(hospitalId: string) {
-    const { data, error } = await this.supabase
-      .from('doctors')
-      .select(`
-        *,
-        user:users!doctors_user_id_fkey(id, full_name, avatar_url, phone, email),
-        specialization:specializations(id, name, display_name)
-      `)
-      .eq('hospital_id', hospitalId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new BadRequestError('Failed to fetch doctors');
-    }
-
-    return data || [];
+    return await hospitalRepository.getDoctors(hospitalId);
   }
-
-  /**
-   * Add doctor to hospital
-   */
-  async addDoctor(hospitalId: string, userId: string, doctorData: any) {
-    const hospital = await this.getById(hospitalId);
-    if (hospital.admin_user_id !== userId) {
-      throw new ForbiddenError('Access denied');
-    }
-
-    // Check if user with this phone already exists
-    const { data: existingUser } = await this.supabase
-      .from('users')
-      .select('id, role')
-      .eq('phone', doctorData.phone)
-      .single();
-
-    let doctorUserId: string;
-
-    if (existingUser) {
-      if (existingUser.role === 'doctor') {
-        throw new BadRequestError('This phone number is already registered as a doctor');
-      }
-      doctorUserId = existingUser.id;
-      
-      // Update user to doctor role
-      await this.supabase
-        .from('users')
-        .update({
-          role: 'doctor',
-          full_name: doctorData.fullName,
-          email: doctorData.email,
-        })
-        .eq('id', existingUser.id);
-    } else {
-      // Create new user
-      const { data: newUser, error: userError } = await this.supabase
-        .from('users')
-        .insert({
-          phone: doctorData.phone,
-          full_name: doctorData.fullName,
-          email: doctorData.email || null,
-          role: 'doctor',
-          is_active: true,
-        })
-        .select()
-        .single();
-
-      if (userError || !newUser) {
-        throw new BadRequestError('Failed to create doctor user');
-      }
-      doctorUserId = (newUser as any).id;
-    }
-
-    // Create doctor record (use column names from migrations)
-    const { data: doctor, error: doctorError } = await this.supabase
-      .from('doctors')
-      .insert(({
-        user_id: doctorUserId,
-        hospital_id: hospitalId,
-        registration_number: (doctorData as any).medicalRegistrationNumber || (doctorData as any).registrationNumber || null,
-        registration_council: (doctorData as any).registrationCouncil || null,
-        license_number: (doctorData as any).licenseNumber || null,
-        specialization_id: (doctorData as any).specializationId || null,
-        specialization: (doctorData as any).specialization || null,
-        sub_specializations: (doctorData as any).subSpecializations || null,
-        qualifications: doctorData.qualifications || null,
-        years_of_experience: (doctorData as any).experienceYears || (doctorData as any).yearsOfExperience || 0,
-        bio: doctorData.bio || null,
-        consultation_fee: (doctorData as any).consultationFeeInPerson || (doctorData as any).consultation_fee || 0,
-        online_consultation_fee: (doctorData as any).consultationFeeOnline || (doctorData as any).online_consultation_fee || 0,
-        follow_up_fee: (doctorData as any).consultationFeeWalkIn || (doctorData as any).follow_up_fee || null,
-        home_visit_fee: (doctorData as any).homeVisitFee || null,
-        consultation_duration: doctorData.consultationDuration || 15,
-        languages: doctorData.languagesSpoken || ['English', 'Hindi'],
-        verification_status: 'pending',
-        is_active: true,
-      } as any))
-      .select()
-      .single();
-
-    if (doctorError || !doctor) {
-      this.logger.error('Failed to create doctor', doctorError);
-      throw new BadRequestError('Failed to create doctor');
-    }
-
-    return doctor;
-  }
-
-  /**
-   * Remove doctor from hospital
-   */
-  async removeDoctor(hospitalId: string, doctorId: string, userId: string) {
-    const hospital = await this.getById(hospitalId);
-    if (hospital.admin_user_id !== userId) {
-      throw new ForbiddenError('Access denied');
-    }
-
-    const { error } = await this.supabase
-      .from('doctors')
-      .update({ is_active: false, hospital_id: null })
-      .eq('id', doctorId)
-      .eq('hospital_id', hospitalId);
-
-    if (error) {
-      throw new BadRequestError('Failed to remove doctor');
-    }
-
-    return { success: true };
-  }
-
-  // =================================================================
-  // Verification (Admin)
-  // =================================================================
 
   /**
    * Verify hospital (admin only)
    */
-  async verifyHospital(
-    hospitalId: string,
-    status: VerificationStatus,
-    notes?: string
-  ): Promise<any> {
-    const { data, error } = await this.supabase
-      .from('hospitals')
-      .update({
-        verification_status: status,
-        verification_notes: notes || null,
-        verified_at: status === 'verified' ? new Date().toISOString() : null,
+  async verify(hospitalId: string, data: any) {
+    try {
+      return await hospitalRepository.update(hospitalId, {
+        verification_status: data.verification_status,
+        verification_notes: data.verification_notes,
+        is_verified: data.verification_status === 'verified',
+        verified_at: data.verification_status === 'verified' ? new Date().toISOString() : null,
+        verified_by: data.verified_by,
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', hospitalId)
-      .select()
-      .single();
-
-    if (error || !data) {
-      throw new BadRequestError('Failed to update verification status');
+      } as any);
+    } catch (error) {
+      this.log.error('Failed to verify hospital', error);
+      throw new BadRequestError('Failed to verify hospital');
     }
-
-    // TODO: Send notification to hospital admin
-
-    return data as any;
   }
 
   /**
-   * Get hospitals pending verification (admin)
+   * Update doctor settings
    */
-  async getPendingVerifications() {
-    const { data, error } = await this.supabase
-      .from('hospitals')
-      .select(`
-        *,
-        admin:users!hospitals_admin_user_id_fkey(full_name, email, phone)
-      `)
-      .eq('verification_status', 'pending')
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      throw new BadRequestError('Failed to fetch pending verifications');
+  async updateDoctorSettings(doctorId: string, data: any): Promise<any> {
+    try {
+      const updated = await doctorRepository.update(doctorId, data);
+      if (!updated) {
+        throw new NotFoundError('Doctor settings not updated');
+      }
+      return updated;
+    } catch (error) {
+      this.log.error('Failed to update doctor settings', error);
+      if (error instanceof NotFoundError) throw error;
+      throw new BadRequestError('Failed to update doctor settings');
     }
-
-    return data || [];
   }
 
-  // =================================================================
-  // Subscription Management
-  // =================================================================
+  // ============================================================================
+  // Staff Management (Reception Users)
+  // ============================================================================
 
   /**
-   * Update hospital subscription
+   * Add reception staff to hospital
+   * Creates user with reception role and links to hospital_staff
    */
-  async updateSubscription(
-    hospitalId: string,
-    tier: SubscriptionTier,
-    startsAt: string,
-    endsAt: string
-  ): Promise<any> {
-    const { data, error } = await this.supabase
-      .from('hospitals')
-      .update({
-        subscription_tier: tier,
-        subscription_starts_at: startsAt,
-        subscription_ends_at: endsAt,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', hospitalId)
-      .select()
-      .single();
-
-    if (error || !data) {
-      throw new BadRequestError('Failed to update subscription');
+  async addStaff(hospitalId: string, userId: string, data: { name: string; phone: string; email?: string }): Promise<any> {
+    // Verify hospital ownership
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('You do not have permission to add staff');
     }
 
-    return data as any;
+    // Check if phone already registered
+    const existingUser = await userRepository.findByPhone(data.phone);
+    if (existingUser) {
+      throw new ConflictError('A user with this phone number already exists');
+    }
+
+    // Generate default password: name@123
+    const firstName = data.name.split(' ')[0].toLowerCase();
+    const defaultPassword = `${firstName}@123`;
+    const passwordHash = await bcrypt.hash(defaultPassword, this.saltRounds);
+
+    try {
+      // Create user with reception role
+      const newUser = await userRepository.create({
+        name: data.name,
+        phone: data.phone,
+        email: data.email || null,
+        password_hash: passwordHash,
+        role: 'reception',
+        is_active: true,
+        verification_status: 'verified',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Link to hospital_staff table
+      await hospitalRepository.addStaff(hospitalId, newUser.id, 'reception');
+
+      this.log.info(`Added reception staff ${newUser.id} to hospital ${hospitalId}`);
+
+      return {
+        id: newUser.id,
+        name: newUser.name,
+        phone: newUser.phone,
+        email: newUser.email,
+        role: 'reception',
+        defaultPassword,
+        message: 'Staff added successfully. Share the login credentials with the staff member.',
+      };
+    } catch (error) {
+      this.log.error('Failed to add staff', error);
+      throw new BadRequestError('Failed to add staff member');
+    }
+  }
+
+  /**
+   * List all staff for a hospital
+   */
+  async listStaff(hospitalId: string, userId: string): Promise<any[]> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('Access denied');
+    }
+
+    try {
+      return await hospitalRepository.getStaff(hospitalId);
+    } catch (error) {
+      this.log.error('Failed to list staff', error);
+      throw new BadRequestError('Failed to list staff');
+    }
+  }
+
+  /**
+   * Remove staff from hospital (soft delete)
+   */
+  async removeStaff(hospitalId: string, staffUserId: string, adminUserId: string): Promise<void> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== adminUserId) {
+      throw new ForbiddenError('You do not have permission to remove staff');
+    }
+
+    try {
+      // Deactivate user
+      await userRepository.updateProfile(staffUserId, {
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      } as any);
+
+      // Remove from hospital_staff
+      await hospitalRepository.removeStaff(hospitalId, staffUserId);
+
+      this.log.info(`Removed staff ${staffUserId} from hospital ${hospitalId}`);
+    } catch (error) {
+      this.log.error('Failed to remove staff', error);
+      throw new BadRequestError('Failed to remove staff member');
+    }
   }
 }
 
-// Export singleton instance
 export const hospitalService = new HospitalService();
+
+

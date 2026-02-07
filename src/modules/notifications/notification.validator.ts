@@ -121,3 +121,4 @@ export type ListNotificationsInput = z.infer<typeof listNotificationsSchema>['qu
 export type UpdatePreferencesInput = z.infer<typeof updatePreferencesSchema>['body'];
 export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>['body'];
 
+

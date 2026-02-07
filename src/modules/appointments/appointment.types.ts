@@ -17,9 +17,22 @@ import type {
 // ============================================================================
 
 export interface AppointmentWithDetails extends Appointment {
+  // Legacy fields for frontend compatibility
+  booking_id?: string;
+  appointment_date?: string;
+  start_time?: string;
+  end_time?: string;
+
+  // Frontend compatibility (camelCase)
+  bookingId?: string;
+  appointmentDate?: string;
+  startTime?: string;
+  endTime?: string;
+  consultationType?: ConsultationType;
+
   patient?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
     phone: string;
     email: string | null;
     avatar_url: string | null;
@@ -28,7 +41,7 @@ export interface AppointmentWithDetails extends Appointment {
   };
   family_member?: {
     id: string;
-    full_name: string;
+    name: string;
     relationship: string;
     gender: string | null;
     date_of_birth: string | null;
@@ -36,7 +49,7 @@ export interface AppointmentWithDetails extends Appointment {
   doctor?: {
     id: string;
     user_id: string;
-    full_name: string | null;
+    name: string | null;
     title: string;
     avatar_url: string | null;
     specialization_name: string | null;
@@ -49,6 +62,8 @@ export interface AppointmentWithDetails extends Appointment {
     contact_phone: string | null;
   };
   consultation?: Consultation | null;
+  vitals?: any;
+  notes?: string | null;
   prescription?: Prescription | null;
   payment?: {
     id: string;
@@ -60,20 +75,25 @@ export interface AppointmentWithDetails extends Appointment {
 
 export interface AppointmentListItem {
   id: string;
-  booking_id: string;
-  appointment_date: string;
-  start_time: string;
-  end_time: string;
-  consultation_type: ConsultationType;
+  bookingId: string;
+  appointmentDate: string;
+  startTime: string;
+  endTime: string;
+  consultationType: ConsultationType;
   status: AppointmentStatus;
-  patient_name: string | null;
-  patient_avatar: string | null;
-  doctor_name: string | null;
-  doctor_avatar: string | null;
-  hospital_name: string | null;
+  patientName: string | null;
+  patientAvatar: string | null;
+  doctorName: string | null;
+  doctorAvatar: string | null;
+  doctorSpecialization: string | null;
+  hospitalName: string | null;
+  hospitalAddress: string | null;
+  hospitalCity: string | null;
+  hospitalState: string | null;
   symptoms: string | null;
-  payment_status?: PaymentStatus;
-  total_amount?: number;
+  paymentStatus: PaymentStatus | null;
+  totalAmount: number | null;
+  isFollowup: boolean;
 }
 
 // ============================================================================
@@ -109,15 +129,15 @@ export interface AvailableSlot {
 // ============================================================================
 
 export interface BookAppointmentInput {
-  doctor_id: string;
-  hospital_id?: string;
-  family_member_id?: string;
-  appointment_date: string;
-  start_time: string;
-  end_time?: string;
-  consultation_type: ConsultationType;
+  doctorId: string;
+  hospitalId?: string;
+  familyMemberId?: string;
+  appointmentDate: string;
+  startTime: string;
+  endTime?: string;
+  consultationType: ConsultationType;
   symptoms?: string;
-  patient_notes?: string;
+  notes?: string;
 }
 
 export interface RescheduleInput {
@@ -167,12 +187,12 @@ export interface ConsultationDetails extends Consultation {
   appointment?: Appointment;
   patient?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
     avatar_url: string | null;
   };
   doctor?: {
     id: string;
-    full_name: string | null;
+    name: string | null;
     title: string;
   };
 }
@@ -290,3 +310,4 @@ export const APPOINTMENT_TRANSITIONS: AppointmentTransition[] = [
   { from: 'rescheduled', to: 'confirmed', action: 'confirm_reschedule', allowed_roles: ['patient'] },
   { from: 'rescheduled', to: 'cancelled', action: 'cancel', allowed_roles: ['patient', 'doctor', 'hospital', 'admin'] },
 ];
+

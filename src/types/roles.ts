@@ -1,11 +1,21 @@
 /**
- * User Role Types
+ * User Role Types - ROZX Healthcare Platform
+ * 
+ * Roles (from database migration 001_extensions_enums.sql):
+ * - patient:    End user / consumer
+ * - reception:  Hospital front-desk staff
+ * - doctor:     Medical professional
+ * - hospital:   Hospital owner / manager
+ * - pharmacy:   ROZX pharmacy team
+ * - admin:      Platform super admin
  */
 
 export const USER_ROLES = {
   PATIENT: 'patient',
+  RECEPTION: 'reception',
   DOCTOR: 'doctor',
   HOSPITAL: 'hospital',
+  PHARMACY: 'pharmacy',
   ADMIN: 'admin',
 } as const;
 
@@ -13,12 +23,15 @@ export type UserRole = (typeof USER_ROLES)[keyof typeof USER_ROLES];
 
 /**
  * Role hierarchy for permission checking
+ * Higher number = more privileges
  */
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
   patient: 1,
-  doctor: 2,
-  hospital: 3,
-  admin: 4,
+  reception: 2,
+  doctor: 3,
+  hospital: 4,
+  pharmacy: 4,  // Same level as hospital (different domain)
+  admin: 5,
 };
 
 /**
@@ -32,10 +45,11 @@ export const hasRolePermission = (
 };
 
 /**
- * Role-based route access
+ * Role-based permissions
+ * Each role has specific capabilities in the platform
  */
 export const ROLE_PERMISSIONS = {
-  // Patient permissions
+  // Patient permissions - core consumer features
   patient: [
     'view:own_profile',
     'update:own_profile',
@@ -49,9 +63,26 @@ export const ROLE_PERMISSIONS = {
     'upload:documents',
     'view:own_payments',
     'create:review',
+    'view:medicines',
+    'order:medicines',
+    'view:own_orders',
   ],
 
-  // Doctor permissions (includes patient permissions + doctor-specific)
+  // Reception permissions - hospital front-desk operations
+  reception: [
+    'view:own_profile',
+    'update:own_profile',
+    'view:hospital_appointments',
+    'create:walkin_booking',
+    'checkin:patient',
+    'view:hospital_doctors',
+    'view:hospital_schedule',
+    'process:cash_payment',
+    'view:hospital_patients',
+    'reschedule:appointment',
+  ],
+
+  // Doctor permissions - medical professional capabilities
   doctor: [
     'view:own_profile',
     'update:own_profile',
@@ -62,9 +93,11 @@ export const ROLE_PERMISSIONS = {
     'update:consultation_notes',
     'view:own_schedule',
     'view:own_analytics',
+    'start:consultation',
+    'complete:consultation',
   ],
 
-  // Hospital permissions (includes doctor permissions + hospital-specific)
+  // Hospital permissions - hospital management
   hospital: [
     'view:own_profile',
     'update:own_profile',
@@ -78,9 +111,29 @@ export const ROLE_PERMISSIONS = {
     'view:patients',
     'manage:walkin_bookings',
     'view:reports',
+    'manage:staff',
+    'view:settlements',
   ],
 
-  // Admin permissions (full access)
+  // Pharmacy permissions - medicine e-commerce operations
+  pharmacy: [
+    'view:own_profile',
+    'update:own_profile',
+    'view:medicines',
+    'manage:medicines',
+    'manage:inventory',
+    'view:medicine_orders',
+    'manage:medicine_orders',
+    'confirm:order',
+    'process:order_status',
+    'dispatch:order',
+    'view:prescriptions',
+    'verify:prescription',
+    'manage:pharmacy_settlements',
+    'view:pharmacy_analytics',
+  ],
+
+  // Admin permissions - full platform access
   admin: [
     'manage:all',
     'verify:hospitals',
@@ -91,6 +144,9 @@ export const ROLE_PERMISSIONS = {
     'view:audit_logs',
     'manage:support',
     'manage:billing',
+    'manage:pharmacy',
+    'manage:settlements',
+    'impersonate:user',
   ],
 } as const;
 
@@ -117,4 +173,25 @@ export const hasPermission = (
  */
 export const getRolePermissions = (role: UserRole): readonly string[] => {
   return ROLE_PERMISSIONS[role];
+};
+
+/**
+ * Check if a role is a staff role (works within an organization)
+ */
+export const isStaffRole = (role: UserRole): boolean => {
+  return ['reception', 'doctor'].includes(role);
+};
+
+/**
+ * Check if a role is an organization role (manages an entity)
+ */
+export const isOrganizationRole = (role: UserRole): boolean => {
+  return ['hospital', 'pharmacy'].includes(role);
+};
+
+/**
+ * Check if a role has platform-wide access
+ */
+export const isPlatformRole = (role: UserRole): boolean => {
+  return ['pharmacy', 'admin'].includes(role);
 };

@@ -897,7 +897,7 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.family_members.id"];
           user_id?: parameters["rowFilter.family_members.user_id"];
-          full_name?: parameters["rowFilter.family_members.full_name"];
+          name?: parameters["rowFilter.family_members.name"];
           relationship?: parameters["rowFilter.family_members.relationship"];
           date_of_birth?: parameters["rowFilter.family_members.date_of_birth"];
           gender?: parameters["rowFilter.family_members.gender"];
@@ -964,7 +964,7 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.family_members.id"];
           user_id?: parameters["rowFilter.family_members.user_id"];
-          full_name?: parameters["rowFilter.family_members.full_name"];
+          name?: parameters["rowFilter.family_members.name"];
           relationship?: parameters["rowFilter.family_members.relationship"];
           date_of_birth?: parameters["rowFilter.family_members.date_of_birth"];
           gender?: parameters["rowFilter.family_members.gender"];
@@ -995,7 +995,7 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.family_members.id"];
           user_id?: parameters["rowFilter.family_members.user_id"];
-          full_name?: parameters["rowFilter.family_members.full_name"];
+          name?: parameters["rowFilter.family_members.name"];
           relationship?: parameters["rowFilter.family_members.relationship"];
           date_of_birth?: parameters["rowFilter.family_members.date_of_birth"];
           gender?: parameters["rowFilter.family_members.gender"];
@@ -1167,7 +1167,6 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.specializations.id"];
           name?: parameters["rowFilter.specializations.name"];
-          display_name?: parameters["rowFilter.specializations.display_name"];
           description?: parameters["rowFilter.specializations.description"];
           icon_url?: parameters["rowFilter.specializations.icon_url"];
           parent_id?: parameters["rowFilter.specializations.parent_id"];
@@ -1227,7 +1226,6 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.specializations.id"];
           name?: parameters["rowFilter.specializations.name"];
-          display_name?: parameters["rowFilter.specializations.display_name"];
           description?: parameters["rowFilter.specializations.description"];
           icon_url?: parameters["rowFilter.specializations.icon_url"];
           parent_id?: parameters["rowFilter.specializations.parent_id"];
@@ -1251,7 +1249,6 @@ export interface paths {
         query: {
           id?: parameters["rowFilter.specializations.id"];
           name?: parameters["rowFilter.specializations.name"];
-          display_name?: parameters["rowFilter.specializations.display_name"];
           description?: parameters["rowFilter.specializations.description"];
           icon_url?: parameters["rowFilter.specializations.icon_url"];
           parent_id?: parameters["rowFilter.specializations.parent_id"];
@@ -4152,7 +4149,7 @@ export interface paths {
           email_verified?: parameters["rowFilter.users.email_verified"];
           email_verified_at?: parameters["rowFilter.users.email_verified_at"];
           password_hash?: parameters["rowFilter.users.password_hash"];
-          full_name?: parameters["rowFilter.users.full_name"];
+          name?: parameters["rowFilter.users.name"];
           role?: parameters["rowFilter.users.role"];
           avatar_url?: parameters["rowFilter.users.avatar_url"];
           date_of_birth?: parameters["rowFilter.users.date_of_birth"];
@@ -4239,7 +4236,7 @@ export interface paths {
           email_verified?: parameters["rowFilter.users.email_verified"];
           email_verified_at?: parameters["rowFilter.users.email_verified_at"];
           password_hash?: parameters["rowFilter.users.password_hash"];
-          full_name?: parameters["rowFilter.users.full_name"];
+          name?: parameters["rowFilter.users.name"];
           role?: parameters["rowFilter.users.role"];
           avatar_url?: parameters["rowFilter.users.avatar_url"];
           date_of_birth?: parameters["rowFilter.users.date_of_birth"];
@@ -4290,7 +4287,7 @@ export interface paths {
           email_verified?: parameters["rowFilter.users.email_verified"];
           email_verified_at?: parameters["rowFilter.users.email_verified_at"];
           password_hash?: parameters["rowFilter.users.password_hash"];
-          full_name?: parameters["rowFilter.users.full_name"];
+          name?: parameters["rowFilter.users.name"];
           role?: parameters["rowFilter.users.role"];
           avatar_url?: parameters["rowFilter.users.avatar_url"];
           date_of_birth?: parameters["rowFilter.users.date_of_birth"];
@@ -5174,8 +5171,7 @@ export interface paths {
           alternate_phone?: parameters["rowFilter.hospitals.alternate_phone"];
           email?: parameters["rowFilter.hospitals.email"];
           website?: parameters["rowFilter.hospitals.website"];
-          address_line1?: parameters["rowFilter.hospitals.address_line1"];
-          address_line2?: parameters["rowFilter.hospitals.address_line2"];
+          address?: parameters["rowFilter.hospitals.address"];
           landmark?: parameters["rowFilter.hospitals.landmark"];
           city?: parameters["rowFilter.hospitals.city"];
           state?: parameters["rowFilter.hospitals.state"];
@@ -5282,8 +5278,7 @@ export interface paths {
           alternate_phone?: parameters["rowFilter.hospitals.alternate_phone"];
           email?: parameters["rowFilter.hospitals.email"];
           website?: parameters["rowFilter.hospitals.website"];
-          address_line1?: parameters["rowFilter.hospitals.address_line1"];
-          address_line2?: parameters["rowFilter.hospitals.address_line2"];
+          address?: parameters["rowFilter.hospitals.address"];
           landmark?: parameters["rowFilter.hospitals.landmark"];
           city?: parameters["rowFilter.hospitals.city"];
           state?: parameters["rowFilter.hospitals.state"];
@@ -5354,8 +5349,7 @@ export interface paths {
           alternate_phone?: parameters["rowFilter.hospitals.alternate_phone"];
           email?: parameters["rowFilter.hospitals.email"];
           website?: parameters["rowFilter.hospitals.website"];
-          address_line1?: parameters["rowFilter.hospitals.address_line1"];
-          address_line2?: parameters["rowFilter.hospitals.address_line2"];
+          address?: parameters["rowFilter.hospitals.address"];
           landmark?: parameters["rowFilter.hospitals.landmark"];
           city?: parameters["rowFilter.hospitals.city"];
           state?: parameters["rowFilter.hospitals.state"];
@@ -6098,34 +6092,34 @@ export interface definitions {
      * @enum {string}
      */
     type:
-      | "appointment_booked"
-      | "appointment_confirmed"
-      | "appointment_cancelled"
-      | "appointment_rescheduled"
-      | "appointment_reminder_24h"
-      | "appointment_reminder_1h"
-      | "appointment_check_in"
-      | "consultation_started"
-      | "consultation_ended"
-      | "waiting_room_ready"
-      | "payment_success"
-      | "payment_failed"
-      | "payment_refund_initiated"
-      | "payment_refund_completed"
-      | "prescription_ready"
-      | "medicine_reminder"
-      | "refill_reminder"
-      | "follow_up_reminder"
-      | "lab_report_ready"
-      | "welcome"
-      | "profile_verified"
-      | "profile_rejected"
-      | "password_changed"
-      | "new_doctor_available"
-      | "hospital_announcement"
-      | "promotional"
-      | "health_tip"
-      | "general";
+    | "appointment_booked"
+    | "appointment_confirmed"
+    | "appointment_cancelled"
+    | "appointment_rescheduled"
+    | "appointment_reminder_24h"
+    | "appointment_reminder_1h"
+    | "appointment_check_in"
+    | "consultation_started"
+    | "consultation_ended"
+    | "waiting_room_ready"
+    | "payment_success"
+    | "payment_failed"
+    | "payment_refund_initiated"
+    | "payment_refund_completed"
+    | "prescription_ready"
+    | "medicine_reminder"
+    | "refill_reminder"
+    | "follow_up_reminder"
+    | "lab_report_ready"
+    | "welcome"
+    | "profile_verified"
+    | "profile_rejected"
+    | "password_changed"
+    | "new_doctor_available"
+    | "hospital_announcement"
+    | "promotional"
+    | "health_tip"
+    | "general";
     /** Format: public.notification_channel[] */
     channels: string[];
     /**
@@ -6260,12 +6254,12 @@ export interface definitions {
      * @enum {string}
      */
     status:
-      | "pending"
-      | "processing"
-      | "completed"
-      | "failed"
-      | "refunded"
-      | "partially_refunded";
+    | "pending"
+    | "processing"
+    | "completed"
+    | "failed"
+    | "refunded"
+    | "partially_refunded";
     /**
      * Format: timestamp with time zone
      * @default now()
@@ -6339,13 +6333,13 @@ export interface definitions {
      * @enum {string}
      */
     status:
-      | "scheduled"
-      | "waiting"
-      | "in_progress"
-      | "paused"
-      | "completed"
-      | "cancelled"
-      | "failed";
+    | "scheduled"
+    | "waiting"
+    | "in_progress"
+    | "paused"
+    | "completed"
+    | "cancelled"
+    | "failed";
     /**
      * Format: integer
      * @default 15
@@ -6382,6 +6376,8 @@ export interface definitions {
      * @default false
      */
     recording_consent?: boolean;
+    /** Format: jsonb */
+    vitals?: unknown;
     /** Format: jsonb */
     patient_device_info?: unknown;
     /** Format: jsonb */
@@ -6590,20 +6586,20 @@ export interface definitions {
      */
     user_id: string;
     /** Format: character varying */
-    full_name: string;
+    name: string;
     /**
      * Format: public.family_relationship
      * @enum {string}
      */
     relationship:
-      | "self"
-      | "spouse"
-      | "child"
-      | "parent"
-      | "sibling"
-      | "grandparent"
-      | "grandchild"
-      | "other";
+    | "self"
+    | "spouse"
+    | "child"
+    | "parent"
+    | "sibling"
+    | "grandparent"
+    | "grandchild"
+    | "other";
     /** Format: date */
     date_of_birth?: string;
     /**
@@ -6616,15 +6612,15 @@ export interface definitions {
      * @enum {string}
      */
     blood_group?:
-      | "A+"
-      | "A-"
-      | "B+"
-      | "B-"
-      | "AB+"
-      | "AB-"
-      | "O+"
-      | "O-"
-      | "unknown";
+    | "A+"
+    | "A-"
+    | "B+"
+    | "B-"
+    | "AB+"
+    | "AB-"
+    | "O+"
+    | "O-"
+    | "unknown";
     /** Format: character varying */
     phone?: string;
     /** Format: text[] */
@@ -6677,13 +6673,13 @@ export interface definitions {
      * @enum {string}
      */
     day_of_week:
-      | "monday"
-      | "tuesday"
-      | "wednesday"
-      | "thursday"
-      | "friday"
-      | "saturday"
-      | "sunday";
+    | "monday"
+    | "tuesday"
+    | "wednesday"
+    | "thursday"
+    | "friday"
+    | "saturday"
+    | "sunday";
     /** Format: time without time zone */
     start_time: string;
     /** Format: time without time zone */
@@ -6745,8 +6741,6 @@ export interface definitions {
     id: string;
     /** Format: character varying */
     name: string;
-    /** Format: character varying */
-    display_name: string;
     /** Format: text */
     description?: string;
     /** Format: text */
@@ -6918,12 +6912,12 @@ export interface definitions {
      * @enum {string}
      */
     purpose:
-      | "registration"
-      | "login"
-      | "password_reset"
-      | "phone_verification"
-      | "email_verification"
-      | "transaction";
+    | "registration"
+    | "login"
+    | "password_reset"
+    | "phone_verification"
+    | "email_verification"
+    | "transaction";
     /**
      * Format: public.otp_channel
      * @default whatsapp
@@ -7015,7 +7009,7 @@ export interface definitions {
      */
     id: string;
     /** Format: character varying */
-    booking_id: string;
+    appointment_number: string;
     /**
      * Format: uuid
      * @description Note:
@@ -7041,33 +7035,33 @@ export interface definitions {
      */
     hospital_id?: string;
     /** Format: date */
-    appointment_date: string;
-    /** Format: time without time zone */
-    start_time: string;
-    /** Format: time without time zone */
-    end_time: string;
+    scheduled_date: string;
+    /** Format: timestamptz */
+    scheduled_start: string;
+    /** Format: timestamptz */
+    scheduled_end: string;
     /**
      * Format: public.consultation_type
      * @default in_person
      * @enum {string}
      */
-    consultation_type: "in_person" | "online" | "phone" | "home_visit";
+    consultation_type: "in_person" | "online" | "walk_in";
     /**
      * Format: public.appointment_status
      * @default pending_payment
      * @enum {string}
      */
     status:
-      | "pending_payment"
-      | "pending"
-      | "confirmed"
-      | "checked_in"
-      | "waiting"
-      | "in_progress"
-      | "completed"
-      | "cancelled"
-      | "no_show"
-      | "rescheduled";
+    | "pending_payment"
+    | "pending"
+    | "confirmed"
+    | "checked_in"
+    | "waiting"
+    | "in_progress"
+    | "completed"
+    | "cancelled"
+    | "no_show"
+    | "rescheduled";
     /** Format: text */
     symptoms?: string;
     /** Format: text */
@@ -7207,12 +7201,12 @@ export interface definitions {
      * @enum {string}
      */
     refund_type:
-      | "full"
-      | "partial_75"
-      | "partial_50"
-      | "none"
-      | "doctor_cancelled"
-      | "technical_failure";
+    | "full"
+    | "partial_75"
+    | "partial_50"
+    | "none"
+    | "doctor_cancelled"
+    | "technical_failure";
     /** Format: numeric */
     refund_percentage?: number;
     /** Format: numeric */
@@ -7448,14 +7442,14 @@ export interface definitions {
      * @enum {string}
      */
     type:
-      | "prescription"
-      | "lab_report"
-      | "imaging"
-      | "medical_certificate"
-      | "discharge_summary"
-      | "insurance_document"
-      | "vaccination_record"
-      | "other";
+    | "prescription"
+    | "lab_report"
+    | "imaging"
+    | "medical_certificate"
+    | "discharge_summary"
+    | "insurance_document"
+    | "vaccination_record"
+    | "other";
     /** Format: character varying */
     title: string;
     /** Format: text */
@@ -7653,34 +7647,34 @@ export interface definitions {
      * @enum {string}
      */
     type:
-      | "appointment_booked"
-      | "appointment_confirmed"
-      | "appointment_cancelled"
-      | "appointment_rescheduled"
-      | "appointment_reminder_24h"
-      | "appointment_reminder_1h"
-      | "appointment_check_in"
-      | "consultation_started"
-      | "consultation_ended"
-      | "waiting_room_ready"
-      | "payment_success"
-      | "payment_failed"
-      | "payment_refund_initiated"
-      | "payment_refund_completed"
-      | "prescription_ready"
-      | "medicine_reminder"
-      | "refill_reminder"
-      | "follow_up_reminder"
-      | "lab_report_ready"
-      | "welcome"
-      | "profile_verified"
-      | "profile_rejected"
-      | "password_changed"
-      | "new_doctor_available"
-      | "hospital_announcement"
-      | "promotional"
-      | "health_tip"
-      | "general";
+    | "appointment_booked"
+    | "appointment_confirmed"
+    | "appointment_cancelled"
+    | "appointment_rescheduled"
+    | "appointment_reminder_24h"
+    | "appointment_reminder_1h"
+    | "appointment_check_in"
+    | "consultation_started"
+    | "consultation_ended"
+    | "waiting_room_ready"
+    | "payment_success"
+    | "payment_failed"
+    | "payment_refund_initiated"
+    | "payment_refund_completed"
+    | "prescription_ready"
+    | "medicine_reminder"
+    | "refill_reminder"
+    | "follow_up_reminder"
+    | "lab_report_ready"
+    | "welcome"
+    | "profile_verified"
+    | "profile_rejected"
+    | "password_changed"
+    | "new_doctor_available"
+    | "hospital_announcement"
+    | "promotional"
+    | "health_tip"
+    | "general";
     /**
      * Format: public.notification_channel
      * @enum {string}
@@ -8253,7 +8247,7 @@ export interface definitions {
     /** Format: character varying */
     password_hash?: string;
     /** Format: character varying */
-    full_name?: string;
+    name?: string;
     /**
      * Format: public.user_role
      * @default patient
@@ -8274,15 +8268,15 @@ export interface definitions {
      * @enum {string}
      */
     blood_group?:
-      | "A+"
-      | "A-"
-      | "B+"
-      | "B-"
-      | "AB+"
-      | "AB-"
-      | "O+"
-      | "O-"
-      | "unknown";
+    | "A+"
+    | "A-"
+    | "B+"
+    | "B-"
+    | "AB+"
+    | "AB-"
+    | "O+"
+    | "O-"
+    | "unknown";
     /** Format: integer */
     height_cm?: number;
     /** Format: numeric */
@@ -8601,11 +8595,11 @@ export interface definitions {
      * @enum {string}
      */
     verification_status?:
-      | "pending"
-      | "under_review"
-      | "verified"
-      | "rejected"
-      | "suspended";
+    | "pending"
+    | "under_review"
+    | "verified"
+    | "rejected"
+    | "suspended";
     /**
      * Format: boolean
      * @default false
@@ -8787,13 +8781,13 @@ export interface definitions {
      * @enum {string}
      */
     type?:
-      | "multi_specialty"
-      | "single_specialty"
-      | "nursing_home"
-      | "clinic"
-      | "diagnostic_center"
-      | "medical_college"
-      | "primary_health";
+    | "multi_specialty"
+    | "single_specialty"
+    | "nursing_home"
+    | "clinic"
+    | "diagnostic_center"
+    | "medical_college"
+    | "primary_health";
     /** Format: character varying */
     registration_number?: string;
     /** Format: character varying */
@@ -8811,9 +8805,7 @@ export interface definitions {
     /** Format: character varying */
     website?: string;
     /** Format: character varying */
-    address_line1: string;
-    /** Format: character varying */
-    address_line2?: string;
+    address: string;
     /** Format: character varying */
     landmark?: string;
     /** Format: character varying */
@@ -8909,11 +8901,11 @@ export interface definitions {
      * @enum {string}
      */
     verification_status?:
-      | "pending"
-      | "under_review"
-      | "verified"
-      | "rejected"
-      | "suspended";
+    | "pending"
+    | "under_review"
+    | "verified"
+    | "rejected"
+    | "suspended";
     /**
      * Format: boolean
      * @default false
@@ -9010,7 +9002,7 @@ export interface definitions {
      * @default in_person
      * @enum {string}
      */
-    consultation_type: "in_person" | "online" | "phone" | "home_visit";
+    consultation_type: "in_person" | "online" | "walk_in";
     /**
      * Format: boolean
      * @default true
@@ -9064,34 +9056,34 @@ export interface definitions {
      * @enum {string}
      */
     type:
-      | "appointment_booked"
-      | "appointment_confirmed"
-      | "appointment_cancelled"
-      | "appointment_rescheduled"
-      | "appointment_reminder_24h"
-      | "appointment_reminder_1h"
-      | "appointment_check_in"
-      | "consultation_started"
-      | "consultation_ended"
-      | "waiting_room_ready"
-      | "payment_success"
-      | "payment_failed"
-      | "payment_refund_initiated"
-      | "payment_refund_completed"
-      | "prescription_ready"
-      | "medicine_reminder"
-      | "refill_reminder"
-      | "follow_up_reminder"
-      | "lab_report_ready"
-      | "welcome"
-      | "profile_verified"
-      | "profile_rejected"
-      | "password_changed"
-      | "new_doctor_available"
-      | "hospital_announcement"
-      | "promotional"
-      | "health_tip"
-      | "general";
+    | "appointment_booked"
+    | "appointment_confirmed"
+    | "appointment_cancelled"
+    | "appointment_rescheduled"
+    | "appointment_reminder_24h"
+    | "appointment_reminder_1h"
+    | "appointment_check_in"
+    | "consultation_started"
+    | "consultation_ended"
+    | "waiting_room_ready"
+    | "payment_success"
+    | "payment_failed"
+    | "payment_refund_initiated"
+    | "payment_refund_completed"
+    | "prescription_ready"
+    | "medicine_reminder"
+    | "refill_reminder"
+    | "follow_up_reminder"
+    | "lab_report_ready"
+    | "welcome"
+    | "profile_verified"
+    | "profile_rejected"
+    | "password_changed"
+    | "new_doctor_available"
+    | "hospital_announcement"
+    | "promotional"
+    | "health_tip"
+    | "general";
     /**
      * Format: public.notification_channel
      * @default in_app
@@ -9194,17 +9186,17 @@ export interface definitions {
      * @enum {string}
      */
     action:
-      | "create"
-      | "read"
-      | "update"
-      | "delete"
-      | "login"
-      | "logout"
-      | "password_change"
-      | "verification"
-      | "payment"
-      | "refund"
-      | "export";
+    | "create"
+    | "read"
+    | "update"
+    | "delete"
+    | "login"
+    | "logout"
+    | "password_change"
+    | "verification"
+    | "payment"
+    | "refund"
+    | "export";
     /** Format: text */
     action_description?: string;
     /** Format: character varying */
@@ -9251,11 +9243,11 @@ export interface parameters {
    * @enum {string}
    */
   preferPost:
-    | "return=representation"
-    | "return=minimal"
-    | "return=none"
-    | "resolution=ignore-duplicates"
-    | "resolution=merge-duplicates";
+  | "return=representation"
+  | "return=minimal"
+  | "return=none"
+  | "resolution=ignore-duplicates"
+  | "resolution=merge-duplicates";
   /** @description Filtering Columns */
   select: string;
   /** @description On Conflict */
@@ -9349,6 +9341,7 @@ export interface parameters {
   "rowFilter.consultations.patient_network_quality": string;
   "rowFilter.consultations.doctor_network_quality": string;
   "rowFilter.consultations.call_quality_score": string;
+  "rowFilter.consultations.vitals": string;
   "rowFilter.consultations.doctor_notes": string;
   "rowFilter.consultations.ai_transcript": string;
   "rowFilter.consultations.recording_url": string;
@@ -9414,7 +9407,7 @@ export interface parameters {
   "body.family_members": definitions["family_members"];
   "rowFilter.family_members.id": string;
   "rowFilter.family_members.user_id": string;
-  "rowFilter.family_members.full_name": string;
+  "rowFilter.family_members.name": string;
   "rowFilter.family_members.relationship": string;
   "rowFilter.family_members.date_of_birth": string;
   "rowFilter.family_members.gender": string;
@@ -9452,7 +9445,6 @@ export interface parameters {
   "body.specializations": definitions["specializations"];
   "rowFilter.specializations.id": string;
   "rowFilter.specializations.name": string;
-  "rowFilter.specializations.display_name": string;
   "rowFilter.specializations.description": string;
   "rowFilter.specializations.icon_url": string;
   "rowFilter.specializations.parent_id": string;
@@ -9879,7 +9871,7 @@ export interface parameters {
   "rowFilter.users.email_verified": string;
   "rowFilter.users.email_verified_at": string;
   "rowFilter.users.password_hash": string;
-  "rowFilter.users.full_name": string;
+  "rowFilter.users.name": string;
   "rowFilter.users.role": string;
   "rowFilter.users.avatar_url": string;
   "rowFilter.users.date_of_birth": string;
@@ -10041,8 +10033,7 @@ export interface parameters {
   "rowFilter.hospitals.alternate_phone": string;
   "rowFilter.hospitals.email": string;
   "rowFilter.hospitals.website": string;
-  "rowFilter.hospitals.address_line1": string;
-  "rowFilter.hospitals.address_line2": string;
+  "rowFilter.hospitals.address": string;
   "rowFilter.hospitals.landmark": string;
   "rowFilter.hospitals.city": string;
   "rowFilter.hospitals.state": string;
@@ -10148,6 +10139,6 @@ export interface parameters {
   "rowFilter.audit_logs.created_at": string;
 }
 
-export interface operations {}
+export interface operations { }
 
-export interface external {}
+export interface external { }

@@ -14,7 +14,7 @@ const relationshipSchema = z.enum(['self', 'spouse', 'parent', 'child', 'sibling
 
 export const createFamilyMemberSchema = z.object({
   body: z.object({
-    full_name: z.string().min(2).max(255).trim(),
+    name: z.string().min(2).max(255).trim(),
     relationship: relationshipSchema,
     gender: genderSchema.optional(),
     date_of_birth: dateSchema.optional(),
@@ -32,7 +32,7 @@ export const updateFamilyMemberSchema = z.object({
     memberId: uuidSchema,
   }),
   body: z.object({
-    full_name: z.string().min(2).max(255).trim().optional(),
+    name: z.string().min(2).max(255).trim().optional(),
     relationship: relationshipSchema.optional(),
     gender: genderSchema.optional(),
     date_of_birth: dateSchema.optional().nullable(),
@@ -370,3 +370,4 @@ export type RecordReminderActionInput = z.infer<typeof recordReminderActionSchem
 export type CreateAllergyInput = z.infer<typeof createAllergySchema>['body'];
 export type UpdateAllergyInput = z.infer<typeof updateAllergySchema>['body'];
 export type ListAllergiesInput = z.infer<typeof listAllergiesSchema>['query'];
+
