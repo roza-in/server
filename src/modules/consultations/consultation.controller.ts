@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { consultationService } from './consultation.service.js';
 import { consultationPolicy } from './consultation.policy.js';
 import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import { ForbiddenError } from '../../common/errors/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';

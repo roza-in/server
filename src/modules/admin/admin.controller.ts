@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { adminService } from './admin.service.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { sendSuccess, sendPaginated } from '../../common/responses/index.js';
 import {
   userGrowthQuerySchema,

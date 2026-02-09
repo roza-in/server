@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/database/supabase-admin.js';
+import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { logger } from '../../config/logger.js';
 import crypto from 'crypto';
 

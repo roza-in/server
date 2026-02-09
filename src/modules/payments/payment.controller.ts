@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { paymentService } from './payment.service.js';
 import { paymentPolicy } from './payment.policy.js';
 import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { CreateOrderInput, VerifyPaymentInput, ProcessRefundInput, PaymentFilters, CashfreeCallbackInput } from './payment.types.js';

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { appointmentService } from './appointment.service.js';
 import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { BookAppointmentInput, ListAppointmentsInput, RescheduleAppointmentInput, CancelAppointmentInput, UpdateAppointmentStatusInput } from './appointment.validator.js';

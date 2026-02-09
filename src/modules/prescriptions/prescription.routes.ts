@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { authMiddleware } from '@/middlewares/auth.middleware.js';
-import { roleGuard } from '@/middlewares/role.middleware.js';
+import { authMiddleware } from '../../middlewares/auth.middleware.js';
+import { roleGuard } from '../../middlewares/role.middleware.js';
 import {
     createPrescription,
     getPrescription,
@@ -9,7 +9,7 @@ import {
     signPrescription,
 } from './prescription.controller.js';
 
-import { idempotencyMiddleware } from '@/middlewares/idempotency.middleware.js';
+import { idempotencyMiddleware } from '../../middlewares/idempotency.middleware.js';
 
 const router = Router();
 

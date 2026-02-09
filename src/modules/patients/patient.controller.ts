@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { patientService } from './patient.service.js';
 import { sendSuccess } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 
 /**

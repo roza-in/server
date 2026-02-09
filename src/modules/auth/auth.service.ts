@@ -14,8 +14,8 @@ import type { AuthTokens, LoginResponse, OTPSendResponse, UserProfile, PasswordL
 import type { SendOTPInput, VerifyOTPInput, RegisterPatientInput, RegisterHospitalInput, RefreshTokenInput, UpdateProfileInput, CompleteUserRegistrationInput, RegisterHospitalProfileInput, RegisterHospitalComplianceInput, RegisterHospitalAddressInput } from './auth.validator.js';
 import type { OTPPurpose, UserSession, UserRole } from '../../types/database.types.js';
 import { getRedisClient, checkRateLimit } from '../../config/redis.js';
-import { notificationService } from '@/integrations/notification/notification.service.js';
-import { NotificationChannel, NotificationPurpose } from '@/integrations/notification/notification.types.js';
+import { notificationService } from '../../integrations/notification/notification.service.js';
+import { NotificationChannel, NotificationPurpose } from '../../integrations/notification/notification.types.js';
 import { formatUserProfile, mapUserToProfile } from '../users/user.mapper.js';
 
 const SESSION_EXPIRES_DAYS = 30;

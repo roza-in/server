@@ -3,7 +3,7 @@ import { doctorService } from './doctor.service.js';
 import { specializationRepository } from '../../database/repositories/specialization.repo.js';
 import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
 import { sendSuccess, sendPaginated, calculatePagination } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { ListDoctorsInput, UpdateDoctorInput, CreateDoctorInput } from './doctor.validator.js';

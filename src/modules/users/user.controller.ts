@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { userService } from './user.service.js';
 import { mapUserToProfile } from './user.mapper.js';
 import { sendSuccess, sendPaginated, calculatePagination } from '../../common/responses/index.js';
-import { asyncHandler } from '@/middlewares/error.middleware.js';
+import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { UpdateUserInput, BlockUserInput, ListUsersInput } from './user.validator.js';

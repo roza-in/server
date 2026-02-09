@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import { storageService } from './storage.service.js';
 import { logger } from '../../config/logger.js';
 import { sendSuccess } from '../../common/responses/index.js';
-import { supabaseAdmin } from '@/database/supabase-admin.js';
+import { supabaseAdmin } from '../../database/supabase-admin.js';
 
 /* ----------------------------------
    TYPES

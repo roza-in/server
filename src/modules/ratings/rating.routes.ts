@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { authMiddleware } from '@/middlewares/auth.middleware.js';
-import { roleGuard } from '@/middlewares/role.middleware.js';
+import { authMiddleware } from '../../middlewares/auth.middleware.js';
+import { roleGuard } from '../../middlewares/role.middleware.js';
 import {
     createRating,
     listRatings,
