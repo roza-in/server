@@ -712,9 +712,14 @@ class ReceptionService {
             },
             scheduledStart: data.scheduled_start,
             scheduledEnd: data.scheduled_end,
+            status: data.status,
+            consultationType: data.consultation_type,
+            checkedInAt: data.checked_in_at,
             // Add formatted times for UI
             checkedInAtFormatted: data.checked_in_at ? formatToIST(data.checked_in_at) : null,
             scheduledStartFormatted: formatToIST(data.scheduled_start),
+            consultationFee: data.consultation_fee,
+            paymentCollectedAt: data.payment_collected_at
         };
     }
 
