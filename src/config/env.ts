@@ -227,14 +227,13 @@ const parseEnv = () => {
       return envSchema.parse(process.env)
    } catch (error) {
       if (error instanceof z.ZodError) {
-         console.error('\n❌ ENVIRONMENT VALIDATION FAILED:\n');
+         console.error('\ENVIRONMENT VALIDATION FAILED:\n');
          error.issues.forEach((e) => {
             console.error(`- ${e.path.join('.')}: ${e.message}`);
          });
 
          if (process.env.NODE_ENV === 'production') {
-            console.error('\n⚠️ WARNING: Starting in production with invalid env. This may cause runtime crashes.\n');
-            // Return what we have parsed so far to avoid total crash
+            console.error('\nWARNING: Starting in production with invalid env. This may cause runtime crashes.\n');
             return (error as any).data || process.env as any;
          }
 
