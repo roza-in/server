@@ -67,7 +67,7 @@ const corsOriginValidator = (origin: string | undefined, callback: (err: Error |
       return true; // Allow in development only
     }
     if (allowed === origin) return true;
-    // Support wildcard subdomains like *.rozx.health
+    // Support wildcard subdomains like *.rozx.in
     if (allowed.startsWith('*.')) {
       const domain = allowed.slice(2);
       return origin.endsWith(domain);
