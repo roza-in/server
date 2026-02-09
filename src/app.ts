@@ -54,32 +54,51 @@ const corsOriginValidator = (origin: string | undefined, callback: (err: Error |
     return callback(null, true);
   }
 
-  const allowedOrigins = env.CORS_ORIGIN.split(',').map(o => o.trim());
+  const allowedOrigins = env.CORS_ORIGIN.split(',').map(o => o.trim()).filter(Boolean);
 
   // Check if origin matches any allowed origin
   const isAllowed = allowedOrigins.some(allowed => {
-    // SECURITY: Block wildcard (*) in production to prevent CORS bypass
+    // 1. Direct match or wildcard '*'
     if (allowed === '*') {
       if (isProduction) {
         logger.warn('CORS wildcard (*) is not allowed in production - rejecting origin');
         return false;
       }
-      return true; // Allow in development only
+      return true;
     }
+
     if (allowed === origin) return true;
-    // Support wildcard subdomains like *.rozx.in
-    if (allowed.startsWith('*.')) {
-      const domain = allowed.slice(2);
-      return origin.endsWith(domain);
+
+    // 2. Subdomain wildcard matching (e.g., https://*.rozx.in or *.rozx.in)
+    if (allowed.includes('*')) {
+      // Escape for regex and convert * to [^.]+ (one subdomain level)
+      // We handle both protocol-prefixed and non-prefixed patterns
+      const pattern = allowed
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&') // Escape regex specials
+        .replace('\\*', '[^.]+');               // Convert escaped * back to matcher
+
+      const regex = new RegExp(`^${pattern}$`);
+      if (regex.test(origin)) return true;
+
+      // Also support matching domain without subdomain if it was *.domain
+      const domainOnly = allowed.replace('*.', '');
+      if (domainOnly === origin) return true;
     }
+
     return false;
   });
 
-  if (isAllowed) {
+  // 3. Fail-safe for platform domains in production
+  const isRozxDomain = origin === 'https://rozx.in' || origin.endsWith('.rozx.in');
+
+  if (isAllowed || (isProduction && isRozxDomain)) {
+    if (isProduction && !isAllowed && isRozxDomain) {
+      logger.info(`CORS origin ${origin} allowed via production fail-safe`);
+    }
     callback(null, true);
   } else {
-    logger.warn(`CORS blocked origin: ${origin}`);
-    callback(new Error('Not allowed by CORS'));
+    logger.warn(`CORS blocked origin: ${origin}. Allowed: ${env.CORS_ORIGIN}`);
+    callback(null, false);
   }
 };
 
@@ -131,7 +150,18 @@ export function createApp(): Application {
     origin: corsOriginValidator,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Idempotency-Key'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Request-ID',
+      'X-Idempotency-Key',
+      'X-Requested-With',
+      'Accept',
+      'Accept-Version',
+      'Date',
+      'X-Api-Version',
+      'X-CSRF-Token'
+    ],
     exposedHeaders: ['X-Request-ID', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
   }));
 
