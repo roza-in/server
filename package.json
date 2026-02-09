@@ -39,7 +39,7 @@
   },
   "homepage": "https://github.com/roza-in/server#readme",
   "engines": {
-    "node": "20.x"
+    "node": "18.x"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",

@@ -15,7 +15,7 @@
     },
     "functions": {
         "api/index.ts": {
-            "runtime": "@vercel/node@3.0.0",
+            "runtime": "@vercel/node",
             "maxDuration": 60
         }
     },
