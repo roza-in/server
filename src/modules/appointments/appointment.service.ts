@@ -1,5 +1,4 @@
 import { logger } from '../../config/logger.js';
-import { logger } from '../../config/logger.js';
 import { formatToIST, formatAppointmentDate } from '../../common/utils/date.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
 import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';

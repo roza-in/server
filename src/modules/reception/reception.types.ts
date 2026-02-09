@@ -23,6 +23,8 @@ export interface QueueAppointment {
     status: string;
     consultationType: string;
     checkedInAt: string | null;
+    checkedInAtFormatted?: string | null;
+    scheduledStartFormatted?: string;
     consultationFee?: number;
     paymentCollectedAt?: string | null;
 }

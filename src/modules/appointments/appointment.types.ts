@@ -71,6 +71,8 @@ export interface AppointmentWithDetails extends Appointment {
     total_amount: number;
     paid_at: string | null;
   } | null;
+  patientName?: string;
+  patientPhone?: string;
 }
 
 export interface AppointmentListItem {

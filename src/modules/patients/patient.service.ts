@@ -29,9 +29,9 @@ class PatientService {
             ...upcomingAppointments.map(a => ({
                 id: a.id,
                 type: 'appointment' as const,
-                title: `Appointment with Dr. ${a.doctor_name}`,
-                description: `Status: ${a.status} at ${a.hospital_name}`,
-                timestamp: a.created_at || new Date().toISOString()
+                title: `Appointment with Dr. ${a.doctorName}`,
+                description: `Status: ${a.status} at ${a.hospitalName}`,
+                timestamp: a.appointmentDate || new Date().toISOString()
             })),
             ...recentPrescriptions.map(p => ({
                 id: p.id,
