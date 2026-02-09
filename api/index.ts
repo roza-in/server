@@ -21,6 +21,13 @@ const getAllowedOrigins = (): string[] => {
     return corsOrigin.split(',').map(o => o.trim()).filter(Boolean);
 };
 
+const debugLog = (msg: string, data?: any) => {
+    // Only log in non-production or if explicitly enabled
+    if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_CORS === 'true') {
+        console.log(`[CORS-DEBUG] ${msg}`, data || '');
+    }
+};
+
 // Fast origin validation for preflight
 const isOriginAllowed = (origin: string): boolean => {
     const allowed = getAllowedOrigins();
@@ -69,10 +76,14 @@ const CORS_HEADERS = {
  */
 export default function handler(req: VercelRequest, res: VercelResponse) {
     const origin = req.headers.origin as string | undefined;
+    const method = req.method;
+
+    debugLog(`Incoming ${method} request`, { url: req.url, origin });
 
     // Handle CORS preflight (OPTIONS) requests
-    if (req.method === 'OPTIONS') {
+    if (method === 'OPTIONS') {
         if (origin && isOriginAllowed(origin)) {
+            debugLog(`Allowed OPTIONS for origin: ${origin}`);
             res.setHeader('Access-Control-Allow-Origin', origin);
             res.setHeader('Access-Control-Allow-Credentials', 'true');
             res.setHeader('Access-Control-Allow-Methods', CORS_HEADERS.methods);
@@ -80,6 +91,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
             res.setHeader('Access-Control-Max-Age', CORS_HEADERS.maxAge);
             return res.status(204).end();
         }
+        debugLog(`Blocked OPTIONS for origin: ${origin}`);
         // Reject unauthorized preflight
         return res.status(403).json({ error: 'CORS not allowed' });
     }
@@ -88,6 +100,8 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     if (origin && isOriginAllowed(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
+    } else if (origin) {
+        debugLog(`Warning: Origin ${origin} not allowed for ${method} request`);
     }
 
     // Pass to Express app
