@@ -223,24 +223,32 @@ const envSchema = z.object({
 ------------------------------------------------------------------- */
 
 const parseEnv = () => {
-   try {
-      return envSchema.parse(process.env)
-   } catch (error) {
-      if (error instanceof z.ZodError) {
-         console.error('\ENVIRONMENT VALIDATION FAILED:\n');
-         error.issues.forEach((e) => {
-            console.error(`- ${e.path.join('.')}: ${e.message}`);
-         });
+   const result = envSchema.safeParse(process.env);
 
-         if (process.env.NODE_ENV === 'production') {
-            console.error('\nWARNING: Starting in production with invalid env. This may cause runtime crashes.\n');
-            return (error as any).data || process.env as any;
-         }
+   if (!result.success) {
+      console.error('\nENVIRONMENT VALIDATION FAILED:\n');
+      result.error.issues.forEach((e) => {
+         console.error(`- ${e.path.join('.')}: ${e.message}`);
+      });
 
-         process.exit(1);
+      if (process.env.NODE_ENV === 'production') {
+         console.error('\nWARNING: Starting in production with invalid env. Using partial data and defaults.\n');
+         // Use the data that did pass validation, and for failed fields,
+         // Zod doesn't provide them in .data if they failed.
+         // We'll return the raw process.env as a last resort, but cast to Env
+         // IMPORTANT: In production, we try to keep the app alive.
+         return {
+            ...process.env,
+            // Core overrides to ensure app starts
+            NODE_ENV: 'production',
+            PORT: Number(process.env.PORT) || 5000,
+         } as unknown as Env;
       }
-      throw error;
+
+      process.exit(1);
    }
+
+   return result.data;
 }
 
 export const env = parseEnv()
