@@ -87,7 +87,8 @@ const envSchema = z.object({
    /* =========================
       Security
    ========================== */
-   COOKIE_SECRET: z.string().min(32), // Must be set in .env for all environments
+   COOKIE_SECRET: z.string().min(32),
+   COOKIE_DOMAIN: z.string().optional(),
 
    /* =========================
       OTP

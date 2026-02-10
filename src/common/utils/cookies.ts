@@ -1,3 +1,4 @@
+import { env } from '@/config/env.js';
 import { Request, Response } from 'express';
 
 const ACCESS_COOKIE = 'rozx_access';
@@ -15,7 +16,7 @@ export type TokenPair = {
  */
 function getCookieDomain(): string | undefined {
   // Use COOKIE_DOMAIN if set (supports both local and production subdomain auth)
-  const domain = process.env.COOKIE_DOMAIN;
+  const domain = env.COOKIE_DOMAIN;
 
   if (domain) {
     // Strip port if present (just in case)
@@ -28,7 +29,7 @@ function getCookieDomain(): string | undefined {
 export function setTokenCookies(res: Response, accessToken: string, refreshToken: string, opts?: { maxAgeSeconds?: number; refreshMaxAgeSeconds?: number; secure?: boolean; sameSite?: 'lax' | 'strict' | 'none' }) {
   const accessMaxAge = (opts?.maxAgeSeconds ?? 60 * 60) * 1000; // default 1 hour in ms
   const refreshMaxAge = (opts?.refreshMaxAgeSeconds ?? 60 * 60 * 24 * 30) * 1000; // default 30 days in ms
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = env.NODE_ENV === 'production';
 
   // Secure cookies require HTTPS. Local dev is HTTP, so must be false.
   const secure = opts?.secure ?? isProduction;
