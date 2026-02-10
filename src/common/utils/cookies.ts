@@ -1,4 +1,4 @@
-import { env } from '@/config/env.js';
+import { env } from '../../config/env.js';
 import { Request, Response } from 'express';
 
 const ACCESS_COOKIE = 'rozx_access';
