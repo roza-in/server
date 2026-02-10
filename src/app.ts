@@ -60,10 +60,8 @@ const corsOriginValidator = (origin: string | undefined, callback: (err: Error |
   const isAllowed = allowedOrigins.some(allowed => {
     // 1. Direct match or wildcard '*'
     if (allowed === '*') {
-      if (isProduction) {
-        logger.warn('CORS wildcard (*) is not allowed in production - rejecting origin');
-        return false;
-      }
+      // Allow * in development, but warn/block in production if needed.
+      // For now, we respect the config.
       return true;
     }
 
@@ -88,12 +86,13 @@ const corsOriginValidator = (origin: string | undefined, callback: (err: Error |
     return false;
   });
 
-  // 3. Fail-safe for platform domains in production
+  // 3. Fail-safe for platform domains (Production & Dev)
+  // Always allow our own platform subdomains
   const isRozxDomain = origin === 'https://rozx.in' || origin.endsWith('.rozx.in');
 
-  if (isAllowed || (isProduction && isRozxDomain)) {
+  if (isAllowed || isRozxDomain) {
     if (isProduction && !isAllowed && isRozxDomain) {
-      logger.info(`CORS origin ${origin} allowed via production fail-safe`);
+      logger.info(`CORS origin ${origin} allowed via platform domain fail-safe`);
     }
     callback(null, true);
   } else {
