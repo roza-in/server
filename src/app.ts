@@ -118,7 +118,7 @@ export function createApp(): Application {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://*.googletagmanager.com'],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        imgSrc: ["'self'", 'data:', 'https:', 'blob:', 'https://*,google-analytics.com', 'https://*.googletagmanager.com'],
+        imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         connectSrc: ["'self'", 'https://api.razorpay.com', 'https://*.sentry.io', 'https://*.google-analytics.com', 'https://*.analytics.google.com', 'https://*.googletagmanager.com'],
         frameSrc: ["'self'", 'https://api.razorpay.com'], // For Razorpay checkout
