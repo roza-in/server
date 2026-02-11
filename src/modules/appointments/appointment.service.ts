@@ -741,11 +741,17 @@ class AppointmentService {
           phone: appointment.patientPhone,
           channel: NotificationChannel.WhatsApp,
           variables: {
+            patient_name: patientName,
+            doctor_name: doctorName,
+            date: dateStr,
+            time: appointment.startTime, // Ensure time format matches template expectation if needed
+            // Keeping "1", "2" etc for safety if older templates use them, but intent is named vars now for SMS/Email
             "1": patientName,
             "2": doctorName,
             "3": dateStr,
             "4": typeStr
-          }
+          },
+          whatsappValues: [patientName, doctorName, dateStr, typeStr]
         });
       }
     } catch (error) {

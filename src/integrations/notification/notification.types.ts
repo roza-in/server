@@ -11,6 +11,7 @@ export interface NotificationPayload {
     phone?: string;
     email?: string;
     variables: Record<string, string>;
+    whatsappValues?: string[];
 }
 
 export interface NotificationTemplate {
@@ -46,9 +47,7 @@ export enum NotificationPurpose {
     CONSULTATION_STARTED = "consultation_started",
     CONSULTATION_LINK = "consultation_link",
     PRESCRIPTION_READY = "prescription_ready",
-    MEDICINE_ORDER_CONFIRMATION = "medicine_order_confirmation",
-    GENERAL = "general",
+    MEDICINE_ORDER_CONFIRMATION = "MEDICINE_ORDER_CONFIRMATION",
+    LOGIN_ALERT = "LOGIN_ALERT",
+    GENERAL = "GENERAL",
 }
-
-
-

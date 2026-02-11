@@ -63,7 +63,7 @@ const envSchema = z.object({
    /* =========================
       Application
    ========================== */
-   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+   NODE_ENV: z.enum(['development', 'production', 'test', 'local']).default('development'),
    PORT: numericString(5000),
    API_VERSION: z.string().default('v1'),
    APP_NAME: z.string().default('rozx'),
@@ -170,9 +170,13 @@ const envSchema = z.object({
    TWILIO_AUTH_TOKEN: z.string().optional(),
    TWILIO_PHONE_NUMBER: z.string().optional(),
 
-   // SendGrid (Email)
-   SENDGRID_API_KEY: z.string().optional(),
-   SENDGRID_EMAIL_FROM: z.string().email().optional(),
+   // SMTP (Email)
+   SMTP_HOST: z.string().optional(),
+   SMTP_PORT: numericString(587),
+   SMTP_USER: z.string().optional(),
+   SMTP_PASS: z.string().optional(),
+   SMTP_FROM_EMAIL: z.string().email().optional(),
+   SMTP_FROM_NAME: z.string().optional(),
 
    // Interakt (WhatsApp)
    INTERAKT_API_KEY: z.string().optional(),
@@ -280,7 +284,7 @@ export const features = {
       !!env.INTERAKT_API_KEY ||
       (!!env.WHATSAPP_ACCESS_TOKEN && !!env.WHATSAPP_PHONE_NUMBER_ID) ||
       (!!env.GUPSHUP_API_KEY && !!env.GUPSHUP_SOURCE),
-   email: !!env.SENDGRID_API_KEY && !!env.SENDGRID_EMAIL_FROM,
+   email: (!!env.SMTP_HOST && !!env.SMTP_USER && !!env.SMTP_PASS),
    sms: !!env.EXOTEL_SID && !!env.EXOTEL_API_KEY && !!env.EXOTEL_API_TOKEN,
    video:
       !!env.AGORA_APP_ID && !!env.AGORA_APP_CERTIFICATE,

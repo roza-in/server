@@ -80,13 +80,14 @@ class AuthService {
 
     await notificationService.send({
       purpose: purpose === "login" ? NotificationPurpose.OTP_LOGIN : NotificationPurpose.OTP_REGISTRATION,
-      channel: NotificationChannel.SMS,
+      // channel: NotificationChannel.SMS, // Allow auto-fallback (WhatsApp -> SMS -> Email)
       phone: phone || undefined,
       email: email || undefined,
       variables: {
         otp,
         expiry: String(env.OTP_EXPIRY_MINUTES || 5),
       },
+      whatsappValues: [otp, String(env.OTP_EXPIRY_MINUTES || 5)], // Positional variables for Interakt
     });
 
     return {
@@ -284,6 +285,27 @@ class AuthService {
 
     // Create session with the same sessionId used in JWT
     await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
+
+    // Send Login Alert
+    try {
+      if (user.phone || user.email) {
+        await notificationService.send({
+          purpose: NotificationPurpose.LOGIN_ALERT,
+          phone: user.phone,
+          email: user.email,
+          variables: {
+            device: deviceInfo?.deviceName || "Unknown Device",
+            time: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+            ip: ipAddress || "Unknown IP",
+          },
+          // Template has no variables
+          // whatsappValues: [],
+
+        });
+      }
+    } catch (error) {
+      this.log.error("Failed to send login alert", { userId: user.id, error });
+    }
 
     return {
       user: formatUserProfile(user, hospitalId, doctorId),

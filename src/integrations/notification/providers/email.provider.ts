@@ -1,27 +1,33 @@
-import sgMail from "@sendgrid/mail";
+import nodemailer from "nodemailer";
 import { env } from "../../../config/env.js";
 import { logger } from "../../../config/logger.js";
 
 /**
- * Email Provider using SendGrid
- * https://docs.sendgrid.com/api-reference/mail-send/mail-send
+ * Email Provider using Nodemailer
  */
 class EmailProvider {
   private log = logger.child("EmailProvider");
-  private initialized = false;
+  private transporter: nodemailer.Transporter | null = null;
 
   constructor() {
-    if (env.SENDGRID_API_KEY) {
-      sgMail.setApiKey(env.SENDGRID_API_KEY);
-      this.initialized = true;
-      this.log.info("EmailProvider initialized with SendGrid");
+    if (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS) {
+      this.transporter = nodemailer.createTransport({
+        host: env.SMTP_HOST,
+        port: env.SMTP_PORT || 587,
+        secure: env.SMTP_PORT === 465, // true for 465, false for other ports
+        auth: {
+          user: env.SMTP_USER,
+          pass: env.SMTP_PASS,
+        },
+      });
+      this.log.info("EmailProvider initialized with Nodemailer");
     } else {
-      this.log.warn("EmailProvider not initialized (SENDGRID_API_KEY missing)");
+      this.log.warn("EmailProvider not initialized (SMTP credentials missing)");
     }
   }
 
   /**
-   * Send an email via SendGrid
+   * Send an email via Nodemailer
    * @param to - Recipient email address
    * @param subject - Email subject
    * @param body - Email body (plain text or HTML)
@@ -33,39 +39,30 @@ class EmailProvider {
     body: string,
     isHtml = false
   ): Promise<void> {
-    if (!this.initialized || !env.SENDGRID_API_KEY || !env.SENDGRID_EMAIL_FROM) {
-      this.log.warn("Email skipped (SendGrid not configured)", { to, subject });
+    if (!this.transporter || !env.SMTP_FROM_EMAIL) {
+      this.log.warn("Email skipped (SMTP not configured)", { to, subject });
       throw new Error("EMAIL_NOT_CONFIGURED");
     }
 
     try {
-      const msg = {
+      const mailOptions = {
+        from: `"${env.SMTP_FROM_NAME || 'ROZX Healthcare'}" <${env.SMTP_FROM_EMAIL}>`,
         to,
-        from: {
-          email: env.SENDGRID_EMAIL_FROM,
-          name: "ROZX Healthcare",
-        },
         subject,
-        ...(isHtml ? { html: body } : { text: body }),
+        [isHtml ? 'html' : 'text']: body,
       };
 
-      await sgMail.send(msg);
+      const info = await this.transporter.sendMail(mailOptions);
 
-      this.log.info("Email sent via SendGrid", { to, subject });
+      this.log.info("Email sent via Nodemailer", { to, subject, messageId: info.messageId });
     } catch (error: any) {
-      const errorMessage =
-        error?.response?.body?.errors?.[0]?.message ||
-        error?.message ||
-        "Unknown error";
-
-      this.log.error("Email delivery via SendGrid failed", {
+      this.log.error("Email delivery via Nodemailer failed", {
         to,
         subject,
-        error: errorMessage,
-        status: error?.code,
+        error: error.message,
       });
 
-      throw new Error(`EMAIL_SEND_FAILED: ${errorMessage}`);
+      throw new Error(`EMAIL_SEND_FAILED: ${error.message}`);
     }
   }
 }

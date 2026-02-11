@@ -1,5 +1,6 @@
+import { whatsappService } from "../../integrations/notification/providers/whatsapp.provider.js";
 import { templates } from "../../integrations/notification/notification.templates.js";
-import type { NotificationPayload, NotificationChannel } from "./notification.types.js";
+import { NotificationPayload, NotificationChannel, NotificationPurpose } from "../../integrations/notification/notification.types.js";
 import { logger } from "../../config/logger.js";
 import { emailProvider } from "../../integrations/notification/providers/email.provider.js";
 
@@ -18,7 +19,7 @@ class NotificationService {
    * Default order: WhatsApp → SMS → Email
    */
   async send(payload: NotificationPayload): Promise<void> {
-    const { purpose, phone, email, variables, channel } = payload;
+    const { purpose, phone, email, variables = {}, whatsappValues, channel } = payload;
 
     // Normalize purpose to lowercase to match template keys
     const normalizedPurpose = purpose.toLowerCase();
@@ -37,18 +38,18 @@ class NotificationService {
 
     // Forced channel (explicit)
     if (channel) {
-      await this.sendViaChannel(channel, template, phone, email, variables);
+      await this.sendViaChannel(channel, template, phone, email, variables, whatsappValues);
       return;
     }
 
     // 1️⃣ WhatsApp
     if (phone && template.whatsapp) {
       try {
-        // await whatsappService.sendTemplate(
-        //   phone,
-        //   template.whatsapp,
-        //   Object.values(variables)
-        // );
+        await whatsappService.sendTemplate(
+          phone,
+          template.whatsapp,
+          whatsappValues || Object.values(variables) // Priority: Explicit values > Object values
+        );
         this.log.info("Notification sent via WhatsApp", { purpose, phone });
         return;
       } catch (err) {
@@ -104,7 +105,8 @@ class NotificationService {
     template: any,
     phone?: string,
     email?: string,
-    vars: Record<string, string> = {}
+    vars: Record<string, string> = {},
+    whatsappValues?: string[]
   ) {
     this.log.debug("Sending notification via forced channel", {
       channel,
@@ -123,11 +125,11 @@ class NotificationService {
           this.log.error("WhatsApp send failed: template name undefined (configure env WHATSAPP_TEMPLATE_OTP_*)");
           throw new Error("WHATSAPP_NOT_AVAILABLE");
         }
-        // await whatsappService.sendTemplate(
-        //   phone,
-        //   template.whatsapp,
-        //   Object.values(vars)
-        // );
+        await whatsappService.sendTemplate(
+          phone,
+          template.whatsapp,
+          whatsappValues || Object.values(vars)
+        );
         this.log.info("Notification sent via WhatsApp (forced)", {
           phone,
           templateName: template.whatsapp,
@@ -250,4 +252,3 @@ class NotificationService {
 }
 
 export const notificationService = new NotificationService();
-

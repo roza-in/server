@@ -26,6 +26,9 @@ const WHATSAPP_TEMPLATES = {
 
   // Medicine
   MEDICINE_ORDER_CONFIRMATION: "rozx_medicine_order_confirmation",
+
+  // Security
+  LOGIN_ALERT: "rozx_login_alert",
 };
 
 /**
@@ -52,6 +55,19 @@ export const templates: NotificationTemplateRegistry = {
     email: {
       subject: "Welcome to ROZX – Registration Code",
       body: "Your registration code is {{otp}}. It expires in {{expiry}} minutes.",
+    },
+  },
+
+  // =================================================
+  // Security
+  // =================================================
+
+  [NotificationPurpose.LOGIN_ALERT]: {
+    whatsapp: WHATSAPP_TEMPLATES.LOGIN_ALERT,
+    sms: "New login to your ROZX account from {{device}}. If not you, contact support immediately.",
+    email: {
+      subject: "New Login Detected - ROZX",
+      body: "Start: New login detected on your ROZX account.\n\nDevice: {{device}}\nTime: {{time}}\nIP: {{ip}}\n\nIf this wasn't you, please reset your password immediately.",
     },
   },
 

@@ -42,17 +42,25 @@ export const sendAppointmentReminders = async () => {
 
         for (const appt of appointments as any[]) {
             try {
+                const patientName = appt.users?.name || 'Patient';
+                const doctorName = appt.doctors?.users?.name || 'Doctor';
+                // Extract time from scheduled_start (assuming ISO or HH:mm)
+                // If it is ISO, split T. If it is time, take substring(0,5)
+                const timeStrRaw = appt.scheduled_start || "";
+                const time = timeStrRaw.includes('T') ? timeStrRaw.split('T')[1].substring(0, 5) : timeStrRaw.substring(0, 5);
+
                 // Send reminder notification
                 await notificationService.send({
-                    purpose: 'APPOINTMENT_REMINDER',
+                    purpose: 'appointment_reminder' as any, // NotificationPurpose.APPOINTMENT_REMINDER
                     phone: appt.users?.phone,
                     email: appt.users?.email,
                     variables: {
-                        patient_name: appt.users?.name || 'Patient',
-                        doctor_name: appt.doctors?.users?.name || 'Doctor',
-                        time: appt.scheduled_start?.includes('T') ? appt.scheduled_start.split('T')[1].substring(0, 5) : appt.scheduled_start,
-                        date: dateStr // Defined above
-                    }
+                        patient_name: patientName,
+                        doctor_name: doctorName,
+                        time: time,
+                        date: dateStr
+                    },
+                    whatsappValues: [patientName, doctorName, `${dateStr} at ${time}`]
                 });
             } catch (err) {
                 log.error(`Failed to send reminder for appointment ${appt.id}`, err);

@@ -225,11 +225,7 @@ export const circuitBreakers = {
         failureThreshold: 5,
         timeout: 30000,
     }),
-    sendgrid: new CircuitBreaker({
-        name: 'sendgrid',
-        failureThreshold: 3,
-        timeout: 60000,  // 1 minute (email can wait)
-    }),
+
     msg91: new CircuitBreaker({
         name: 'msg91',
         failureThreshold: 5,
@@ -249,7 +245,7 @@ export const getCircuitBreakerStatuses = (): Record<string, ReturnType<CircuitBr
     return {
         razorpay: circuitBreakers.razorpay.getStatus(),
         phonepe: circuitBreakers.phonepe.getStatus(),
-        sendgrid: circuitBreakers.sendgrid.getStatus(),
+
         msg91: circuitBreakers.msg91.getStatus(),
         whatsapp: circuitBreakers.whatsapp.getStatus(),
     };
