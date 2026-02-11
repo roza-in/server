@@ -599,11 +599,12 @@ class ConsultationService {
     const link = `${env.CLIENT_URL}/consultation/${consultationId}`;
 
     await notificationService.send({
-      purpose: 'CONSULTATION_STARTED' as any,
+      purpose: NotificationPurpose.CONSULTATION_STARTED,
       phone: patient.phone,
       email: patient.email,
       variables: {
-        doctor: doctorName,
+        doctor_name: doctorName,
+        patient_name: patient.name || "Patient",
         link: link
       }
     });

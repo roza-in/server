@@ -15,11 +15,12 @@ process.env.JWT_SECRET = 'test-jwt-secret-for-testing-only';
 process.env.JWT_EXPIRES_IN = '1h';
 process.env.OTP_EXPIRY_MINUTES = '10';
 process.env.SUPABASE_URL = 'https://test.supabase.co';
-process.env.SUPABASE_ANON_KEY = 'test-anon-key';
-process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
+process.env.SUPABASE_ANON_KEY = 'test-anon-key-must-be-at-least-20-chars';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key-must-be-at-least-20-chars';
+process.env.COOKIE_SECRET = 'test-cookie-secret-must-be-at-least-32-chars-long';
 process.env.RAZORPAY_KEY_ID = 'rzp_test_xxx';
 process.env.RAZORPAY_KEY_SECRET = 'test_secret';
-process.env.CORS_ORIGINS = 'http://localhost:3000';
+process.env.CORS_ORIGIN = 'http://localhost:3000';
 
 // Silence console in tests unless explicitly debugging
 if (process.env.DEBUG_TESTS !== 'true') {

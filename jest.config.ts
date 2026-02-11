@@ -21,6 +21,8 @@ const config: Config = {
 
     // Module resolution
     moduleNameMapper: {
+        // Handle path aliases from tsconfig with .js extension
+        '^@/(.*)\\.js$': '<rootDir>/src/$1',
         // Handle path aliases from tsconfig
         '^@/(.*)$': '<rootDir>/src/$1',
         // Handle .js imports in ESM

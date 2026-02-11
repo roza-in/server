@@ -424,7 +424,7 @@ export const ERROR_CODES = {
         code: 'EMAIL_SEND_FAILED',
         httpStatus: 502,
         message: 'Failed to send email',
-        description: 'Error sending email via SendGrid.',
+        description: 'Error sending email via SMTP/Nodemailer.',
     },
     WHATSAPP_SEND_FAILED: {
         code: 'WHATSAPP_SEND_FAILED',

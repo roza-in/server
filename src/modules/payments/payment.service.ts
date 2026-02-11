@@ -306,7 +306,7 @@ class PaymentService {
       } as any);
 
       // Trigger Notification
-      await this.sendConfirmationNotification(payment.appointment_id);
+      await this.sendConfirmationNotification(payment.appointment_id, Number(payment.total_amount));
     }
 
     this.log.info(`Payment verified (Manual): ${gateway_payment_id}`, {
@@ -392,7 +392,7 @@ class PaymentService {
       } as any);
 
       // Trigger Notification
-      await this.sendConfirmationNotification(payment.appointment_id);
+      await this.sendConfirmationNotification(payment.appointment_id, Number(payment.total_amount));
     }
 
     this.log.info(`Cashfree payment verified: ${orderId}`, {
@@ -494,7 +494,7 @@ class PaymentService {
 
         // Send notification
         if (payment.appointment_id) {
-          await this.sendConfirmationNotification(payment.appointment_id);
+          await this.sendConfirmationNotification(payment.appointment_id, Number(payment.total_amount));
         }
       }
     } else if (internalStatus === 'failed') {
@@ -636,7 +636,7 @@ class PaymentService {
         });
 
         // Trigger Notification
-        await this.sendConfirmationNotification(data.appointment_id);
+        await this.sendConfirmationNotification(data.appointment_id, Number(data.total_amount));
       }
     }
   }
@@ -691,7 +691,7 @@ class PaymentService {
   /**
    * Helper to send appointment confirmation notification
    */
-  private async sendConfirmationNotification(appointmentId: string): Promise<void> {
+  private async sendConfirmationNotification(appointmentId: string, amount: number): Promise<void> {
     try {
       const appointment = await appointmentRepository.findByIdWithRelations(appointmentId);
       if (!appointment || !appointment.patient?.phone) return;
@@ -699,32 +699,28 @@ class PaymentService {
       const patientName = appointment.patient.name || 'Patient';
       const doctorName = appointment.doctor?.users?.name ? `Dr. ${appointment.doctor.users.name}` : 'Doctor';
 
-      // Format date and time
-      // appointment.scheduled_start is usually ISO string or similar.
-      // We need date and legacy time 'HH:mm' for formatAppointmentDate
-      // formatToIST converts generic date string to 'HH:mm' if it parses?
-      // Let's check formatAppointmentDate signature: (dateStr: string, timeStr: string)
-      // appointment.scheduled_date is YYYY-MM-DD
-      // appointment.scheduled_start is ISO/Timestamp
-      // we can extract time from scheduled_start using formatToIST which returns HH:mm??
-      // Let's re-read formatToIST in date.ts:
-      // returns HH:mm (IST)
-
       const timeStr = formatToIST(appointment.scheduled_start);
+      // "15 Jan at 10:30 AM" format
       const dateStr = formatAppointmentDate(appointment.scheduled_date, timeStr);
 
       const typeStr = appointment.consultation_type === 'online' ? 'online' : 'in-clinic';
 
+      // Template: "Payment confirmation... Hello {{1}}, we have received your payment of {{2}} for your consultation scheduled on {{3}}..."
+      // {{1}}: Patient Name
+      // {{2}}: Amount
+      // {{3}}: Consultation Date/Time
+
       await notificationService.send({
-        purpose: NotificationPurpose.APPOINTMENT_CONFIRMED,
+        purpose: NotificationPurpose.PAYMENT_SUCCESS,
         phone: appointment.patient.phone,
         channel: NotificationChannel.WhatsApp,
         variables: {
-          "1": patientName,
-          "2": doctorName,
-          "3": dateStr,
-          "4": typeStr
-        }
+          patient_name: patientName,
+          amount: amount.toString(),
+          date: dateStr,
+          doctor_name: doctorName,
+        },
+        whatsappValues: [patientName, amount.toString(), dateStr]
       });
     } catch (error) {
       this.log.error('Failed to send confirmation notification', { appointmentId, error });
