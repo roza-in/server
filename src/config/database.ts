@@ -1,11 +1,50 @@
 import { supabaseAdmin } from '../database/supabase-admin.js';
 import { logger } from '../config/logger.js';
 import { getRedisClient } from './redis.js';
-import { features } from './env.js';
+import { features, env } from './env.js';
 
 /**
  * Database & Infrastructure Health Helpers
+ *
+ * P5 — Connection Pooling Strategy:
+ *
+ * All database access in this project uses the Supabase JS client which
+ * communicates via PostgREST (REST API) and not direct TCP connections.
+ * This means connection pooling is managed **server-side by Supabase**:
+ *
+ *   PostgREST → PgBouncer (connection pooler) → PostgreSQL
+ *
+ * Key implications:
+ * - Each Supabase `.from()` or `.rpc()` call is an HTTP request to PostgREST
+ * - PostgREST uses PgBouncer in transaction mode (configurable per Supabase plan)
+ * - Free & Pro plans: 60 direct / 200 pooled connections
+ * - Team & Enterprise: higher limits
+ *
+ * If you ever add direct SQL via `pg.Pool` (e.g. for complex migrations
+ * or streaming queries), configure it via DATABASE_URL with pooling:
+ *
+ *   DATABASE_URL=postgresql://user:pass@db.xxx.supabase.co:6543/postgres?pgbouncer=true
+ *
+ * The `:6543` port routes through PgBouncer (vs `:5432` which is direct).
+ *
+ * Current architecture ensures we stay within pooled connection limits:
+ * - Single `supabaseAdmin` client (service role, bypasses RLS)
+ * - Per-request `createUserClientFromRequest()` clients (anon key, respects RLS)
+ * - Both use HTTP → PostgREST → PgBouncer, so no TCP connection overhead
  */
+
+/**
+ * Connection pool limits for monitoring.
+ * These match Supabase Pro plan defaults; adjust for your plan tier.
+ */
+export const DB_POOL_CONFIG = {
+    /** Max concurrent direct connections (Supabase plan-dependent) */
+    maxDirectConnections: 60,
+    /** Max concurrent pooled connections via PgBouncer port 6543 */
+    maxPooledConnections: 200,
+    /** PostgREST uses transaction-mode pooling by default */
+    poolMode: 'transaction' as const,
+} as const;
 export const db = {
     /**
      * Health Check - Database

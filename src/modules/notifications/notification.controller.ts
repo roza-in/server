@@ -1,7 +1,6 @@
-// @ts-nocheck
 import { Request, Response } from 'express';
 import { notificationService } from './notification.service.js';
-import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
+import { sendSuccess, sendCreated, sendPaginated, calculatePagination } from '../../common/responses/index.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
@@ -23,8 +22,8 @@ import type {
  */
 export const sendNotification = asyncHandler(async (req: Request, res: Response) => {
   const data = req.body as SendNotificationInput;
-  const notifications = await notificationService.send(data);
-  return sendCreated(res, notifications, 'Notification sent');
+  const notification = await notificationService.sendAdmin(data);
+  return sendCreated(res, notification, 'Notification sent');
 });
 
 /**
@@ -48,9 +47,7 @@ export const listNotifications = asyncHandler(async (req: Request, res: Response
   return sendPaginated(
     res,
     result.notifications,
-    result.pagination.page,
-    result.pagination.limit,
-    result.pagination.total
+    calculatePagination(result.pagination.total, result.pagination.page, result.pagination.limit)
   );
 });
 

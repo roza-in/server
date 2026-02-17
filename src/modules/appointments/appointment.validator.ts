@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { z } from 'zod';
-import { uuidSchema, consultationTypeSchema, appointmentStatusSchema } from '../../common/validators.js';
+import { uuidSchema, consultationTypeSchema, appointmentStatusSchema, paymentStatusSchema } from '../../common/validators.js';
 
 /**
  * Appointment validators using Zod
@@ -52,10 +51,10 @@ export const listAppointmentsSchema = z.object({
     consultationType: consultationTypeSchema.optional(),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    paymentStatus: z.enum(['pending', 'captured', 'refunded', 'failed']).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    limit: z.string().regex(/^\d+$/).transform(Number).default('20'),
-    sortBy: z.enum(['appointmentDate', 'createdAt']).default('appointmentDate'),
+    paymentStatus: paymentStatusSchema.optional(),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
+    sortBy: z.enum(['scheduled_date', 'created_at']).default('scheduled_date'),
     sortOrder: z.enum(['asc', 'desc']).default('desc'),
   }),
 });

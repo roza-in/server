@@ -53,6 +53,7 @@ export {
 // Schedules
 export { scheduleService } from './schedules/schedule.service.js';
 export { slotService } from './schedules/slot.service.js';
+export { scheduleRoutes } from './schedules/schedule.routes.js';
 export {
   createSchedule,
   updateSchedule,
@@ -79,6 +80,17 @@ export {
   handleWebhook
 } from './payments/payment.controller.js';
 
+// Refunds
+export { refundService, refundRoutes } from './refunds/index.js';
+export type {
+  Refund,
+  RefundWithRelations,
+  RefundFilters,
+  CreateRefundInput,
+  ProcessRefundInput,
+  RefundStats,
+} from './refunds/index.js';
+
 // Consultations
 export { consultationService } from './consultations/consultation.service.js';
 export {
@@ -90,14 +102,28 @@ export {
 } from './consultations/consultation.controller.js';
 
 // Prescriptions
-export { prescriptionService } from './prescriptions/prescription.service.js';
-export {
-  createPrescription,
-  getPrescription,
-  listPrescriptions,
-  getMyPrescriptions,
-  signPrescription
+export { prescriptionService } from './prescriptions/index.js';
+export { prescriptionRoutes } from './prescriptions/index.js';
+export type {
+  Prescription,
+  PrescriptionWithRelations,
+  PrescriptionListItem,
+  CreatePrescriptionInput,
+  PrescriptionFilters,
+  Medication,
 } from './prescriptions/index.js';
+
+// Ratings
+export { ratingService, ratingRoutes } from './ratings/index.js';
+export type {
+  Rating,
+  RatingWithRelations,
+  RatingListItem,
+  RatingFilters,
+  CreateRatingInput,
+  ModerateRatingInput,
+  RatingStats,
+} from './ratings/index.js';
 
 // Notifications
 export { notificationService } from './notifications/notification.service.js';
@@ -156,15 +182,48 @@ export {
 } from './health-records/health-records.controller.js';
 
 // Reception
-export { receptionService } from './reception/reception.service.js';
+export { receptionService, receptionRoutes } from './reception/index.js';
+export type {
+  QueueAppointment,
+  QueueResponse,
+  WalkInBookingInput,
+  PatientSearchResult,
+  CashPaymentInput,
+  PrescriptionResponse,
+} from './reception/index.js';
+
+// Support
+export { supportService, supportRoutes } from './support/index.js';
 export {
-  getQueue,
-  checkInPatient,
-  markNoShow as markNoShowReception,
-  createWalkInBooking,
-  searchPatients,
-  registerPatient,
-  recordCashPayment,
-} from './reception/reception.controller.js';
+  createTicket,
+  getMyTickets,
+  listTickets,
+  getTicket,
+  replyToTicket,
+  updateTicket,
+  resolveTicket,
+  closeTicket,
+  getTicketStats,
+  rateTicket,
+} from './support/support.controller.js';
 
-
+// Settlements
+export { settlementService, settlementRoutes } from './settlements/index.js';
+export {
+  listSettlements,
+  getSettlement,
+  getMySettlements,
+  calculateSettlement,
+  approveSettlement,
+  initiatePayout,
+  completeSettlement,
+  getSettlementStats,
+} from './settlements/settlement.controller.js';
+export type {
+  SettlementWithRelations,
+  SettlementListResponse,
+  SettlementStatsResponse,
+  SettlementFilters,
+  CalculateSettlementInput,
+  CompleteSettlementInput,
+} from './settlements/index.js';

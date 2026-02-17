@@ -1,72 +1,67 @@
 // ============================================================================
 // Support Module Types (Support Tickets)
+//
+// Response DTOs — camelCase transforms of DB snake_case rows.
+// Input types are inferred from Zod schemas in support.validator.ts.
 // ============================================================================
 
-export type TicketStatus = 'open' | 'in_progress' | 'waiting_customer' | 'resolved' | 'closed';
-export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TicketCategory = 'appointment' | 'payment' | 'technical' | 'refund' | 'account' | 'other';
+// Re-export canonical enums from database types
+export type { TicketStatus, TicketPriority, TicketCategory } from '../../types/database.types.js';
 
-export interface SupportTicket {
+/** Support ticket response DTO */
+export interface SupportTicketDTO {
     id: string;
-    ticket_number: string;
-    user_id: string;
+    ticketNumber: string | null;
+    userId: string;
+    category: string;
+    priority: string;
     subject: string;
     description: string;
-    category: TicketCategory;
-    priority: TicketPriority;
-    status: TicketStatus;
-    appointment_id: string | null;
-    payment_id: string | null;
-    assigned_to: string | null;
-    resolved_at: string | null;
-    resolution: string | null;
-    created_at: string;
-    updated_at: string;
+    appointmentId: string | null;
+    medicineOrderId: string | null;
+    paymentId: string | null;
+    attachments: string[] | null;
+    status: string;
+    assignedTo: string | null;
+    assignedAt: string | null;
+    resolvedAt: string | null;
+    resolvedBy: string | null;
+    resolutionNotes: string | null;
+    satisfactionRating: number | null;
+    satisfactionFeedback: string | null;
+    firstResponseAt: string | null;
+    slaDueAt: string | null;
+    slaBreached: boolean;
+    createdAt: string;
+    updatedAt: string;
 }
 
-export interface TicketReply {
+/** Ticket message response DTO (was "TicketReply") */
+export interface TicketMessageDTO {
     id: string;
-    ticket_id: string;
-    user_id: string;
+    ticketId: string;
+    senderId: string;
+    senderRole: string;
     message: string;
     attachments: string[] | null;
-    is_internal: boolean;
-    created_at: string;
+    isInternal: boolean;
+    createdAt: string;
 }
 
+/** Ticket with messages for detail view */
+export interface SupportTicketDetailDTO extends SupportTicketDTO {
+    messages: TicketMessageDTO[];
+    user?: { id: string; name: string; email: string; phone: string };
+}
+
+/** Ticket list filters */
 export interface TicketFilters {
-    status?: TicketStatus;
-    priority?: TicketPriority;
-    category?: TicketCategory;
+    status?: string;
+    priority?: string;
+    category?: string;
     userId?: string;
     assignedTo?: string;
     search?: string;
     page?: number;
     limit?: number;
 }
-
-export interface CreateTicketInput {
-    subject: string;
-    description: string;
-    category: TicketCategory;
-    priority?: TicketPriority;
-    appointment_id?: string;
-    payment_id?: string;
-}
-
-export interface ReplyTicketInput {
-    message: string;
-    attachments?: string[];
-    is_internal?: boolean;
-}
-
-export interface UpdateTicketInput {
-    status?: TicketStatus;
-    priority?: TicketPriority;
-    assigned_to?: string;
-}
-
-export interface ResolveTicketInput {
-    resolution: string;
-}
-

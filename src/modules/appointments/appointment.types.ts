@@ -17,18 +17,19 @@ import type {
 // ============================================================================
 
 export interface AppointmentWithDetails extends Appointment {
-  // Legacy fields for frontend compatibility
-  booking_id?: string;
-  appointment_date?: string;
-  start_time?: string;
-  end_time?: string;
-
-  // Frontend compatibility (camelCase)
+  // Frontend compatibility (camelCase aliases)
   bookingId?: string;
+  appointmentNumber?: string;
   appointmentDate?: string;
   startTime?: string;
   endTime?: string;
+  scheduledStart?: string;
+  scheduledEnd?: string;
   consultationType?: ConsultationType;
+  consultationFee?: number;
+  totalAmount?: number;
+  createdAt?: string;
+  updatedAt?: string;
 
   patient?: {
     id: string;
@@ -59,7 +60,7 @@ export interface AppointmentWithDetails extends Appointment {
     name: string;
     slug: string;
     address: any;
-    contact_phone: string | null;
+    phone: string;
   };
   consultation?: Consultation | null;
   vitals?: any;
@@ -83,6 +84,7 @@ export interface AppointmentListItem {
   endTime: string;
   consultationType: ConsultationType;
   status: AppointmentStatus;
+  patientId: string | null;
   patientName: string | null;
   patientAvatar: string | null;
   doctorName: string | null;
@@ -92,10 +94,10 @@ export interface AppointmentListItem {
   hospitalAddress: string | null;
   hospitalCity: string | null;
   hospitalState: string | null;
-  symptoms: string | null;
+  patientNotes: string | null;
   paymentStatus: PaymentStatus | null;
   totalAmount: number | null;
-  isFollowup: boolean;
+  isFollowUp: boolean;
 }
 
 // ============================================================================
@@ -145,7 +147,7 @@ export interface BookAppointmentInput {
 export interface RescheduleInput {
   new_date: string;
   new_start_time: string;
-  reason?: string;
+  status_reason?: string;
 }
 
 export interface CancelInput {
@@ -238,7 +240,7 @@ export interface CreatePrescriptionInput {
   diagnosis?: string;
   medications: MedicationItem[];
   lab_tests?: LabTest[];
-  radiology_tests?: string[];
+  imaging_tests?: string[];
   advice?: string;
   follow_up_date?: string;
   follow_up_instructions?: string;

@@ -10,10 +10,8 @@ import type {
   StartConsultationInput,
   ListConsultationsInput,
   CreatePrescriptionInput,
-  UpdateConsultationNotesInput,
-  UpdateConsultationVitalsInput,
   JoinConsultationInput
-} from './consultation.validator.ts';
+} from './consultation.validator.js';
 
 /**
  * Consultation Controller - Handles HTTP requests for consultations
@@ -98,7 +96,7 @@ export const getVideoToken = asyncHandler(async (req: Request, res: Response) =>
  */
 export const updateNotes = asyncHandler(async (req: Request, res: Response) => {
   const { consultationId } = req.params;
-  const { notes } = req.body;
+  const notes = req.body;
   const user = (req as AuthenticatedRequest).user;
 
   await consultationService.updateNotes(consultationId, user.userId, notes);

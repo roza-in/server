@@ -1,15 +1,22 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
 import {
     createRating,
     listRatings,
     getRating,
     getDoctorRatings,
     getDoctorRatingStats,
-    respondToRating,
     moderateRating,
 } from './rating.controller.js';
+import {
+    createRatingSchema,
+    listRatingsSchema,
+    getRatingSchema,
+    doctorRatingsSchema,
+    moderateRatingSchema,
+} from './rating.validator.js';
 
 const router = Router();
 
@@ -18,7 +25,7 @@ const router = Router();
  * @desc Get doctor ratings (public)
  * @access Public
  */
-router.get('/doctors/:doctorId', getDoctorRatings);
+router.get('/doctors/:doctorId', validate(doctorRatingsSchema), getDoctorRatings);
 
 /**
  * @route GET /api/v1/ratings/doctors/:doctorId/stats
@@ -35,35 +42,28 @@ router.use(authMiddleware);
  * @desc Create a new rating
  * @access Patient
  */
-router.post('/', roleGuard('patient'), createRating);
+router.post('/', roleGuard('patient'), validate(createRatingSchema), createRating);
 
 /**
  * @route GET /api/v1/ratings
  * @desc List all ratings
- * @access Admin, Hospital
+ * @access Admin, Hospital, Doctor
  */
-router.get('/', roleGuard('admin', 'hospital'), listRatings);
+router.get('/', roleGuard('admin', 'hospital', 'doctor'), validate(listRatingsSchema), listRatings);
 
 /**
  * @route GET /api/v1/ratings/:ratingId
  * @desc Get rating by ID
  * @access Authenticated
  */
-router.get('/:ratingId', getRating);
-
-/**
- * @route POST /api/v1/ratings/:ratingId/respond
- * @desc Doctor responds to rating
- * @access Doctor
- */
-router.post('/:ratingId/respond', roleGuard('doctor'), respondToRating);
+router.get('/:ratingId', validate(getRatingSchema), getRating);
 
 /**
  * @route POST /api/v1/ratings/:ratingId/moderate
- * @desc Moderate rating (hide/show)
+ * @desc Moderate rating (flag/hide/show)
  * @access Admin
  */
-router.post('/:ratingId/moderate', roleGuard('admin'), moderateRating);
+router.post('/:ratingId/moderate', roleGuard('admin'), validate(moderateRatingSchema), moderateRating);
 
 export const ratingRoutes = router;
 

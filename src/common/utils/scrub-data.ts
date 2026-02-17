@@ -1,5 +1,5 @@
 /**
- * ROZX Healthcare Platform - sensitive data scrubbing utility
+ * Rozx Healthcare Platform - sensitive data scrubbing utility
  */
 
 /**

@@ -1,14 +1,20 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { sendSuccess, sendCreated, sendPaginated, calculatePagination } from '../../common/responses/index.js';
-import { AuthenticatedRequest } from "../../types/request.js";
+import type { AuthenticatedRequest } from '../../types/request.js';
 import { supportService } from './support.service.js';
+import type {
+    CreateTicketInput,
+    ReplyTicketInput,
+    UpdateTicketInput,
+    ResolveTicketInput,
+    RateTicketInput,
+} from './support.validator.js';
 
 /**
- * Get ticket statistics
+ * Get ticket statistics (Admin)
  */
-export const getTicketStats = asyncHandler(async (req: Request, res: Response) => {
-    // Service takes no args
+export const getTicketStats = asyncHandler(async (_req: Request, res: Response) => {
     const result = await supportService.getStats();
     return sendSuccess(res, result);
 });
@@ -17,52 +23,34 @@ export const getTicketStats = asyncHandler(async (req: Request, res: Response) =
  * Get my support tickets
  */
 export const getMyTickets = asyncHandler(async (req: Request, res: Response) => {
-    const authReq = req as unknown as AuthenticatedRequest;
-    const user = authReq.user;
-    const filters = req.query as any;
-    const page = filters.page ? parseInt(filters.page) : 1;
-    const limit = filters.limit ? parseInt(filters.limit) : 20;
+    const user = (req as AuthenticatedRequest).user;
+    const page = req.query.page ? parseInt(req.query.page as string) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
 
     const result = await supportService.getUserTickets(user.userId, page, limit);
-
-    return sendPaginated(
-        res,
-        result.tickets,
-        calculatePagination(result.total, page, limit)
-    );
+    return sendPaginated(res, result.tickets, calculatePagination(result.total, page, limit));
 });
 
 /**
  * Create a support ticket
  */
 export const createTicket = asyncHandler(async (req: Request, res: Response) => {
-    const authReq = req as unknown as AuthenticatedRequest;
-    const user = authReq.user;
-    const data = req.body;
-
+    const user = (req as AuthenticatedRequest).user;
+    const data = req.body as CreateTicketInput;
     const result = await supportService.create(user.userId, data);
     return sendCreated(res, result, 'Support ticket created successfully');
 });
 
 /**
- * List all support tickets
+ * List all support tickets (Admin)
  */
 export const listTickets = asyncHandler(async (req: Request, res: Response) => {
     const filters = req.query as any;
     const page = filters.page ? parseInt(filters.page) : 1;
     const limit = filters.limit ? parseInt(filters.limit) : 20;
 
-    const result = await supportService.list({
-        ...filters,
-        page,
-        limit
-    });
-
-    return sendPaginated(
-        res,
-        result.tickets,
-        calculatePagination(result.total, page, limit)
-    );
+    const result = await supportService.list({ ...filters, page, limit });
+    return sendPaginated(res, result.tickets, calculatePagination(result.total, page, limit));
 });
 
 /**
@@ -75,49 +63,54 @@ export const getTicket = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
- * Reply to ticket
+ * Reply to ticket (add message)
  */
 export const replyToTicket = asyncHandler(async (req: Request, res: Response) => {
     const { ticketId } = req.params;
-    const { message, attachments } = req.body;
-    const authReq = req as unknown as AuthenticatedRequest;
-    const user = authReq.user;
-
-    const result = await supportService.reply(ticketId, user.userId, {
-        message,
-        attachments
-    });
-    return sendSuccess(res, result, 'Reply added successfully');
+    const user = (req as AuthenticatedRequest).user;
+    const data = req.body as ReplyTicketInput;
+    const result = await supportService.reply(ticketId, user.userId, user.role, data);
+    return sendCreated(res, result, 'Reply added successfully');
 });
 
 /**
- * Update ticket (status, priority, assignment)
+ * Update ticket (Admin: status, priority, assignment)
  */
 export const updateTicket = asyncHandler(async (req: Request, res: Response) => {
     const { ticketId } = req.params;
-    const data = req.body; // status, priority, assignedTo
-    const result = await supportService.update(ticketId, data);
+    const user = (req as AuthenticatedRequest).user;
+    const data = req.body as UpdateTicketInput;
+    const result = await supportService.update(ticketId, user.userId, data);
     return sendSuccess(res, result, 'Ticket updated successfully');
 });
 
 /**
- * Resolve ticket
+ * Resolve ticket (Admin)
  */
 export const resolveTicket = asyncHandler(async (req: Request, res: Response) => {
     const { ticketId } = req.params;
-    const { resolutionNotes } = req.body;
-
-    // Check service method signature: resolve(ticketId, input)
-    const result = await supportService.resolve(ticketId, { resolution: resolutionNotes });
+    const user = (req as AuthenticatedRequest).user;
+    const data = req.body as ResolveTicketInput;
+    const result = await supportService.resolve(ticketId, user.userId, data);
     return sendSuccess(res, result, 'Ticket resolved successfully');
 });
 
 /**
- * Close ticket
+ * Close ticket (Admin)
  */
 export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
     const { ticketId } = req.params;
-    // Service method takes ticketId
     const result = await supportService.close(ticketId);
     return sendSuccess(res, result, 'Ticket closed successfully');
+});
+
+/**
+ * Rate resolved ticket (Customer satisfaction)
+ */
+export const rateTicket = asyncHandler(async (req: Request, res: Response) => {
+    const { ticketId } = req.params;
+    const user = (req as AuthenticatedRequest).user;
+    const data = req.body as RateTicketInput;
+    const result = await supportService.rate(ticketId, user.userId, data);
+    return sendSuccess(res, result, 'Thank you for your feedback');
 });

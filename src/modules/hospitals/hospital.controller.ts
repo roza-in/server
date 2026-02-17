@@ -1,14 +1,14 @@
 import { Request, Response } from 'express';
 import { hospitalService } from './hospital.service.js';
 import { doctorService } from '../doctors/doctor.service.js';
-import { doctorRepository } from '../../database/repositories/doctor.repo.js';
 import { sendSuccess, sendCreated, sendPaginated, calculatePagination } from '../../common/responses/index.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { UpdateHospitalInput, ListHospitalsInput, AddDoctorToHospitalInput } from './hospital.validator.js';
+import type { HospitalFilters } from './hospital.types.js';
 import { hospitalPolicy } from './hospital.policy.js';
-import { UnauthorizedError, NotFoundError, ForbiddenError } from '../../common/errors/index.js';
+import { NotFoundError, ForbiddenError } from '../../common/errors/index.js';
 
 /**
  * Hospital Controller - Handles HTTP requests for hospitals
@@ -39,7 +39,7 @@ export const getHospitalBySlug = asyncHandler(async (req: Request, res: Response
  * GET /api/v1/hospitals
  */
 export const listHospitals = asyncHandler(async (req: Request, res: Response) => {
-  const filters = req.query as unknown as ListHospitalsInput;
+  const filters = req.query as unknown as HospitalFilters;
   const result = await hospitalService.list(filters);
   return sendPaginated(
     res,
@@ -205,8 +205,12 @@ export const verifyHospital = asyncHandler(async (req: Request, res: Response) =
     throw new ForbiddenError('Only system administrators can verify hospitals');
   }
 
-  const data = req.body;
-  const hospital = await hospitalService.verify(hospitalId, data);
+  const { status, rejection_reason } = req.body;
+  const hospital = await hospitalService.verify(hospitalId, {
+    status,
+    rejection_reason,
+    verified_by: user.userId,
+  });
   return sendSuccess(res, hospital, MESSAGES.UPDATED);
 });
 
@@ -232,7 +236,7 @@ export const updateDoctorSettings = asyncHandler(async (req: Request, res: Respo
   const data = req.body;
 
   // Verify doctor exists and belongs to user's hospital
-  const doctor = await doctorRepository.findWithRelations(doctorId);
+  const doctor = await doctorService.getById(doctorId);
   if (!doctor) {
     throw new NotFoundError('Doctor not found');
   }

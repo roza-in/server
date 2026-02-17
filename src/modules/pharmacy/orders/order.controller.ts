@@ -1,6 +1,7 @@
 /**
  * Order Controller
  * HTTP handlers for pharmacy order management
+ * Aligned to migration 007 — centralized ROZX pharmacy model
  */
 
 import { Request, Response } from 'express';
@@ -10,7 +11,7 @@ import { asyncHandler } from '../../../middlewares/error.middleware.js';
 import type { AuthenticatedRequest } from '../../../types/request.js';
 
 // ============================================================================
-// Order Management - Patient
+// Order Management — Patient
 // ============================================================================
 
 /**
@@ -39,7 +40,7 @@ export const getMyOrders = asyncHandler(async (req: Request, res: Response) => {
     return sendPaginated(
         res,
         result.orders,
-        calculatePagination(result.total, page, limit)
+        calculatePagination(result.total, page, limit),
     );
 });
 
@@ -49,7 +50,7 @@ export const getMyOrders = asyncHandler(async (req: Request, res: Response) => {
  */
 export const getOrderById = asyncHandler(async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).user;
-    const order = await orderService.getOrderById(req.params.id, user.userId, user.role);
+    const order = await orderService.getOrderById(req.params.id, user.userId);
     return sendSuccess(res, order);
 });
 
@@ -71,23 +72,23 @@ export const cancelOrder = asyncHandler(async (req: Request, res: Response) => {
     const order = await orderService.cancelOrder(
         user.userId,
         req.params.id,
-        req.body.reason
+        req.body.reason,
     );
     return sendSuccess(res, order, 'Order cancelled successfully');
 });
 
 // ============================================================================
-// Order Management - Pharmacy
+// Order Management — Hospital / Admin
 // ============================================================================
 
 /**
- * Get pharmacy orders
- * GET /api/v1/pharmacy/pharmacy/:pharmacyId/orders
+ * Get hospital orders
+ * GET /api/v1/pharmacy/orders/hospital/:hospitalId
  */
-export const getPharmacyOrders = asyncHandler(async (req: Request, res: Response) => {
+export const getHospitalOrders = asyncHandler(async (req: Request, res: Response) => {
     const page = req.query.page ? parseInt(req.query.page as string) : 1;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-    const result = await orderService.listPharmacyOrders(req.params.pharmacyId, {
+    const result = await orderService.listHospitalOrders(req.params.hospitalId, {
         status: req.query.status as any,
         page,
         limit,
@@ -95,12 +96,12 @@ export const getPharmacyOrders = asyncHandler(async (req: Request, res: Response
     return sendPaginated(
         res,
         result.orders,
-        calculatePagination(result.total, page, limit)
+        calculatePagination(result.total, page, limit),
     );
 });
 
 /**
- * Confirm order (pharmacy)
+ * Confirm order
  * POST /api/v1/pharmacy/orders/:id/confirm
  */
 export const confirmOrder = asyncHandler(async (req: Request, res: Response) => {
@@ -109,7 +110,7 @@ export const confirmOrder = asyncHandler(async (req: Request, res: Response) => 
         user.userId,
         req.params.id,
         req.body.estimatedReadyTime,
-        req.body.notes
+        req.body.notes,
     );
     return sendSuccess(res, order, 'Order confirmed successfully');
 });
@@ -129,12 +130,12 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
         case 'ready_for_pickup':
             order = await orderService.markAsReady(user.userId, req.params.id);
             break;
-        case 'out_for_delivery':
+        case 'dispatched':
             order = await orderService.dispatchOrder(
                 user.userId,
                 req.params.id,
-                req.body.deliveryPartnerId,
-                req.body.trackingId
+                req.body.deliveryPartner,
+                req.body.trackingId,
             );
             break;
         case 'delivered':
@@ -153,15 +154,14 @@ export const updateOrderStatus = asyncHandler(async (req: Request, res: Response
 
 /**
  * Get order statistics
- * GET /api/v1/pharmacy/stats
+ * GET /api/v1/pharmacy/orders/stats
  */
 export const getOrderStats = asyncHandler(async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).user;
-    const role = user.role === 'patient' ? 'patient' : 'pharmacy';
     const stats = await orderService.getOrderStats(
         user.userId,
-        role as any,
-        req.params.pharmacyId
+        user.role,
+        req.params.hospitalId || (user as any).hospitalId,
     );
     return sendSuccess(res, stats);
 });

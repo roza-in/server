@@ -18,7 +18,7 @@ import type {
   CreateAllergyInput,
   UpdateAllergyInput,
   ListAllergiesInput,
-} from './health-records.validator.js';
+} from './health-records.types.js';
 
 /**
  * Health Records Controller - Production-ready HTTP endpoints
@@ -118,7 +118,7 @@ export const listDocuments = asyncHandler(async (req: Request, res: Response) =>
   const user = (req as AuthenticatedRequest).user;
   const filters = {
     ...req.query as unknown as ListDocumentsInput,
-    user_id: user.userId,
+    patient_id: user.userId,
   };
   const { page = 1, limit = 20 } = filters;
   const result = await healthRecordsService.listDocuments(filters);
@@ -186,7 +186,7 @@ export const listVitals = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as AuthenticatedRequest).user;
   const filters = {
     ...req.query as unknown as ListVitalsInput,
-    user_id: user.userId,
+    patient_id: user.userId,
   };
   const { page = 1, limit = 20 } = filters;
   const result = await healthRecordsService.listVitals(filters);
@@ -257,7 +257,7 @@ export const listMedications = asyncHandler(async (req: Request, res: Response) 
   const user = (req as AuthenticatedRequest).user;
   const filters = {
     ...req.query as unknown as ListMedicationsInput,
-    user_id: user.userId,
+    patient_id: user.userId,
   };
   const result = await healthRecordsService.listMedications(filters);
   return sendPaginated(
@@ -297,11 +297,11 @@ export const deleteMedication = asyncHandler(async (req: Request, res: Response)
 export const recordMedicationAction = asyncHandler(async (req: Request, res: Response) => {
   const { medicationId } = req.params;
   const user = (req as AuthenticatedRequest).user;
-  const { action, scheduled_time, taken_at, notes } = req.body;
+  const { action, scheduled_time, taken_at, skipped_reason, notes } = req.body;
   const result = await healthRecordsService.recordMedicationAction(
     medicationId,
     user.userId,
-    { action, scheduled_time, taken_at, notes }
+    { action, scheduled_time, taken_at, skipped_reason, notes }
   );
   return sendSuccess(res, result, action === 'taken' ? 'Medication marked as taken' : 'Action recorded');
 });

@@ -4,6 +4,8 @@ import { appointmentService } from '../appointments/appointment.service.js';
 import { prescriptionService } from '../prescriptions/prescription.service.js';
 import { userRepository } from '../../database/repositories/user.repo.js';
 import type { PatientDashboardData, ActivityTimelineItem } from './patient.types.js';
+import type { Payment, HealthDocument, Prescription } from '../../types/database.types.js';
+import type { AppointmentListItem } from '../appointments/appointment.types.js';
 
 class PatientService {
     private log = logger.child('PatientService');
@@ -26,32 +28,32 @@ class PatientService {
 
         // Construct activity timeline
         const activityTimeline = this.constructTimeline([
-            ...upcomingAppointments.map(a => ({
+            ...upcomingAppointments.map((a: AppointmentListItem) => ({
                 id: a.id,
                 type: 'appointment' as const,
                 title: `Appointment with Dr. ${a.doctorName}`,
                 description: `Status: ${a.status} at ${a.hospitalName}`,
                 timestamp: a.appointmentDate || new Date().toISOString()
             })),
-            ...recentPrescriptions.map(p => ({
+            ...recentPrescriptions.map((p: Prescription) => ({
                 id: p.id,
                 type: 'prescription' as const,
                 title: 'New Prescription Received',
-                description: `From Dr. ${p.doctor?.users?.name || 'Doctor'}`,
+                description: p.diagnosis?.join(', ') || 'Prescription',
                 timestamp: p.created_at
             })),
-            ...recentPayments.map(pay => ({
+            ...recentPayments.map((pay: Payment) => ({
                 id: pay.id,
                 type: 'payment' as const,
                 title: `Payment ${pay.status}`,
-                description: `Amount: ₹${pay.amount} for appointment`,
+                description: `Amount: ₹${pay.total_amount}`,
                 timestamp: pay.completed_at || pay.created_at
             })),
-            ...recentDocs.map(doc => ({
+            ...recentDocs.map((doc: HealthDocument) => ({
                 id: doc.id,
                 type: 'record' as const,
                 title: 'Health Record Uploaded',
-                description: doc.document_name,
+                description: doc.title,
                 timestamp: doc.created_at
             }))
         ]);
@@ -81,7 +83,7 @@ class PatientService {
         const { count: recordCount } = await this.supabase
             .from('health_documents')
             .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId);
+            .eq('patient_id', userId);
 
         return {
             upcomingAppointments: aptStats.upcoming,
@@ -91,7 +93,7 @@ class PatientService {
         };
     }
 
-    private async getUpcomingAppointments(userId: string) {
+    private async getUpcomingAppointments(userId: string): Promise<AppointmentListItem[]> {
         const { appointments } = await appointmentService.list({
             patient_id: userId,
             status: ['confirmed', 'rescheduled', 'pending_payment'],
@@ -103,32 +105,32 @@ class PatientService {
         return appointments;
     }
 
-    private async getRecentPrescriptions(userId: string) {
+    private async getRecentPrescriptions(userId: string): Promise<Prescription[]> {
         const { prescriptions } = await prescriptionService.getPatientPrescriptions(userId, 1, 5);
         return prescriptions;
     }
 
-    private async getRecentPayments(userId: string) {
+    private async getRecentPayments(userId: string): Promise<Payment[]> {
         const { data } = await this.supabase
             .from('payments')
             .select('*')
             .eq('payer_user_id', userId)
             .order('created_at', { ascending: false })
             .limit(5);
-        return data || [];
+        return (data as Payment[]) || [];
     }
 
-    private async getRecentDocuments(userId: string) {
+    private async getRecentDocuments(userId: string): Promise<HealthDocument[]> {
         const { data } = await this.supabase
             .from('health_documents')
             .select('*')
-            .eq('user_id', userId)
+            .eq('patient_id', userId)
             .order('created_at', { ascending: false })
             .limit(5);
-        return data || [];
+        return (data as HealthDocument[]) || [];
     }
 
-    private constructTimeline(items: any[]): ActivityTimelineItem[] {
+    private constructTimeline(items: Omit<ActivityTimelineItem, 'metadata'>[]): ActivityTimelineItem[] {
         return items
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     }

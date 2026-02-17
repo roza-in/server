@@ -128,7 +128,7 @@ export class AppointmentRepository extends BaseRepository<Appointment> {
 
     async findByPatientId(patientId: string, from: number, to: number) {
         const { data, error, count } = await this.getQuery()
-            .select('*, hospitals(name), doctors(users(name))', { count: 'exact' })
+            .select('*, hospitals(name), doctors(users!doctors_user_id_fkey(name))', { count: 'exact' })
             .eq('patient_id', patientId)
             .order('scheduled_date', { ascending: false })
             .range(from, to);

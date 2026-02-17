@@ -9,6 +9,17 @@ import type {
 
 /**
  * Hospital Module Types - Extended from database schema
+ *
+ * DB Table: hospitals (migration 003)
+ * Key columns: type (hospital_type enum), phone, email, website, facilities (TEXT[]),
+ *   logo_url, banner_url, photos, working_hours (JSONB), emergency_services (BOOLEAN),
+ *   accepted_insurance (TEXT[]), founding_year, platform_commission_percent,
+ *   medicine_commission_percent, verification_status (verification_status enum),
+ *   latitude, longitude, location (JSONB)
+ *
+ * NOT in DB: subscription_tier, bank details columns, is_verified, license_number,
+ *   emergency_24x7, contact_phone, contact_email, website_url, amenities,
+ *   cover_image_url, specializations column, total_beds, operating_hours
  */
 
 // ============================================================================
@@ -27,19 +38,17 @@ export interface HospitalProfile extends HospitalRow {
 export interface HospitalListItem {
   id: string;
   name: string;
-  slug: string;
-  hospital_type: HospitalType;
+  slug: string | null;
+  type: HospitalType;
   city: string | null;
   state: string | null;
   logo_url: string | null;
-  cover_image_url: string | null;
-  specializations: string[] | null;
-  subscription_tier: SubscriptionTier;
+  banner_url: string | null;
   verification_status: VerificationStatus;
-  rating: number | null;
+  rating: number;
   total_ratings: number;
-  total_consultations: number;
-  emergency_24x7: boolean;
+  total_appointments: number;
+  emergency_services: boolean;
   is_active: boolean;
 }
 
@@ -52,18 +61,17 @@ export interface HospitalWithDoctors extends Hospital {
 export interface DoctorListItem {
   id: string;
   name: string;
-  title: string;
-  specialization_id: string | null;
+  specialization_id: string;
   specialization_name?: string;
-  qualifications: any;
+  qualifications: string[] | null;
   experience_years: number;
   avatar_url: string | null;
-  rating: number | null;
+  rating: number;
   total_ratings: number;
   consultation_fee_online: number;
   consultation_fee_in_person: number;
-  accepts_online: boolean;
-  accepts_in_person: boolean;
+  online_consultation_enabled: boolean;
+  walk_in_enabled: boolean;
   is_active: boolean;
   next_available_slot?: string;
 }
@@ -81,13 +89,12 @@ export interface HospitalStats {
   completedAppointments: number;
   cancelledAppointments: number;
   todayAppointments: number;
-  upcomingAppointments: number;
+  activeAppointments: number;
   totalRevenue: number;
   monthlyRevenue: number;
-  pendingSettlements: number;
-  platformFeesOwed: number;
-  rating: number | null;
-  totalRatings: number;
+  pendingSettlement: number;
+  averageRating: number;
+  totalReviews: number;
 }
 
 export interface HospitalDashboard {
@@ -101,16 +108,11 @@ export interface HospitalDashboard {
 
 export interface RecentAppointment {
   id: string;
-  booking_id: string;
+  appointment_number: string;
   patient_name: string;
   doctor_name: string;
-  appointment_date: string;
-  start_time: string;
-  // New schema fields
-  appointment_number?: string;
-  scheduled_date?: string;
-  scheduled_start?: string;
-
+  scheduled_date: string;
+  scheduled_start: string;
   consultation_type: string;
   status: string;
   payment_status: string;
@@ -176,7 +178,7 @@ export interface HospitalInvoice {
   issued_at: string;
 }
 
-export interface HospitalSettlement {
+export interface HospitalSettlementInfo {
   id: string;
   period_start: string;
   period_end: string;
@@ -213,18 +215,17 @@ export interface HospitalFilters {
   search?: string;
   city?: string;
   state?: string;
-  hospital_type?: HospitalType;
+  type?: HospitalType;
   specialization_id?: string;
-  subscription_tier?: SubscriptionTier;
   verification_status?: VerificationStatus;
-  emergency_24x7?: boolean;
+  emergency_services?: boolean;
   min_rating?: number;
   latitude?: number;
   longitude?: number;
   radius_km?: number;
   page?: number;
   limit?: number;
-  sort_by?: 'name' | 'rating' | 'total_consultations' | 'created_at' | 'distance';
+  sort_by?: 'name' | 'rating' | 'total_appointments' | 'created_at' | 'distance';
   sort_order?: 'asc' | 'desc';
 }
 
@@ -244,46 +245,15 @@ export interface HospitalListResponse {
 export interface CreateHospitalInput {
   admin_user_id: string;
   name: string;
-  hospital_type: HospitalType;
-  tagline?: string;
+  type: HospitalType;
   description?: string;
   logo_url?: string;
-  cover_image_url?: string;
+  banner_url?: string;
   registration_number?: string;
-  license_number?: string;
-  established_year?: number;
-  address: HospitalAddress;
-  contact_phone?: string;
-  contact_email?: string;
-  website_url?: string;
-  emergency_phone?: string;
-  facilities?: string[];
-  specializations?: string[];
-  insurance_accepted?: string[];
-  languages_spoken?: string[];
-  operating_hours?: OperatingHours;
-  emergency_24x7?: boolean;
-  pharmacy_24x7?: boolean;
-  lab_24x7?: boolean;
-  ambulance_service?: boolean;
-  parking_available?: boolean;
-  cafeteria_available?: boolean;
-}
-
-export interface UpdateHospitalInput {
-  name?: string;
-  tagline?: string;
-  description?: string;
-  logo_url?: string;
-  cover_image_url?: string;
-  gallery_urls?: string[];
-  registration_number?: string;
-  license_number?: string;
-  accreditations?: string[];
-  established_year?: number;
-  total_beds?: number;
-  icu_beds?: number;
-  operating_theaters?: number;
+  founding_year?: number;
+  phone: string;
+  email?: string;
+  website?: string;
   address?: string;
   landmark?: string;
   city?: string;
@@ -292,49 +262,15 @@ export interface UpdateHospitalInput {
   country?: string;
   latitude?: number;
   longitude?: number;
-  contact_phone?: string;
-  contact_email?: string;
-  website_url?: string;
-  emergency_phone?: string;
   facilities?: string[];
-  specializations?: string[];
-  insurance_accepted?: string[];
+  accepted_insurance?: string[];
   languages_spoken?: string[];
-  operating_hours?: OperatingHours;
-  emergency_24x7?: boolean;
-  pharmacy_24x7?: boolean;
-  lab_24x7?: boolean;
-  ambulance_service?: boolean;
-  parking_available?: boolean;
-  cafeteria_available?: boolean;
-  payment_gateway_enabled?: boolean;
-  bank_account_name?: string;
-  bank_account_number?: string;
-  bank_ifsc?: string;
-  bank_branch?: string;
-  upi_id?: string;
-  gstin?: string;
-  pan?: string;
-  seo_title?: string;
-  seo_description?: string;
-  seo_keywords?: string[];
+  working_hours?: OperatingHours;
+  emergency_services?: boolean;
 }
 
-export interface UpdatePaymentSettingsInput {
-  payment_gateway_enabled: boolean;
-  platform_fee_online?: number;
-  platform_fee_in_person?: number;
-  platform_fee_walk_in?: number;
-  auto_settlement?: boolean;
-  settlement_frequency?: string;
-  bank_account_name?: string;
-  bank_account_number?: string;
-  bank_ifsc?: string;
-  bank_branch?: string;
-  upi_id?: string;
-  gstin?: string;
-  pan?: string;
-}
+// UpdateHospitalInput — canonical type inferred from validator schema (hospital.validator.ts)
+// UpdatePaymentSettingsInput — canonical type inferred from validator schema (hospital.validator.ts)
 
 export interface HospitalAddress {
   address?: string;
@@ -373,21 +309,15 @@ export interface TimeBreak {
 // Verification Types
 // ============================================================================
 
-export interface VerifyHospitalInput {
-  hospital_id: string;
-  verification_status: 'verified' | 'rejected';
-  verification_notes?: string;
-  verified_by: string;
-}
+// VerifyHospitalInput — canonical type inferred from validator schema (hospital.validator.ts)
 
 export interface HospitalVerificationDetails {
   id: string;
   name: string;
   registration_number: string | null;
-  license_number: string | null;
   accreditations: string[] | null;
   verification_status: VerificationStatus;
-  verification_notes: string | null;
+  rejection_reason: string | null;
   verified_at: string | null;
   documents: VerificationDocument[];
   admin_details: {

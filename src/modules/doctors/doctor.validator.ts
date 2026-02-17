@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { z } from 'zod';
 import { uuidSchema, consultationTypeSchema, consultationFeeSchema, phoneSchema, emailSchema, medicalRegistrationSchema, experienceYearsSchema } from '../../common/validators.js';
 
@@ -17,7 +16,7 @@ export const getDoctorSchema = z.object({
 export const listDoctorsSchema = z.object({
   query: z.object({
     hospitalId: uuidSchema.optional(),
-    specialization: z.string().max(100).optional(),
+    specializationId: uuidSchema.optional(),
     city: z.string().max(100).optional(),
     state: z.string().max(100).optional(),
     consultationType: consultationTypeSchema.optional(),
@@ -28,9 +27,9 @@ export const listDoctorsSchema = z.object({
     language: z.string().max(50).optional(),
     availableToday: z.enum(['true', 'false']).transform(val => val === 'true').optional(),
     search: z.string().max(255).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    limit: z.string().regex(/^\d+$/).transform(Number).default('20'),
-    sortBy: z.enum(['name', 'rating', 'experience', 'fee', 'createdAt']).default('rating'),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
+    sortBy: z.enum(['name', 'rating', 'experience', 'fee', 'consultations']).default('rating'),
     sortOrder: z.enum(['asc', 'desc']).default('desc'),
   }),
 });
@@ -41,18 +40,25 @@ export const updateDoctorSchema = z.object({
     doctorId: uuidSchema,
   }),
   body: z.object({
-    qualification: z.string().min(2).max(255).optional(),
-    specialization: z.string().min(2).max(100).optional(),
-    subSpecialization: z.string().max(100).optional().nullable(),
+    specializationId: uuidSchema.optional(),
+    qualifications: z.array(z.string().min(1)).optional(),
     experienceYears: z.number().min(0).max(70).optional(),
     bio: z.string().max(2000).optional().nullable(),
-    languagesSpoken: z.array(z.string()).optional(),
-    consultationDuration: z.number().min(5).max(120).optional(),
-    consultationTypes: consultationTypeSchema.optional(),
-    feeInPerson: consultationFeeSchema.optional().nullable(),
-    feeOnline: consultationFeeSchema.optional().nullable(),
-    feeFollowup: consultationFeeSchema.optional().nullable(),
-    isAvailableForEmergency: z.boolean().optional(),
+    languages: z.array(z.string()).optional(),
+    consultationFeeOnline: consultationFeeSchema.optional(),
+    consultationFeeInPerson: consultationFeeSchema.optional(),
+    consultationFeeWalkIn: consultationFeeSchema.optional(),
+    followUpFee: consultationFeeSchema.optional(),
+    followUpValidityDays: z.number().int().min(1).max(90).optional(),
+    slotDurationMinutes: z.number().int().min(5).max(120).optional(),
+    bufferTimeMinutes: z.number().int().min(0).max(60).optional(),
+    maxPatientsPerSlot: z.number().int().min(1).max(100).optional(),
+    onlineConsultationEnabled: z.boolean().optional(),
+    walkInEnabled: z.boolean().optional(),
+    consultationTypes: z.array(consultationTypeSchema).optional(),
+    isAvailable: z.boolean().optional(),
+    registrationNumber: medicalRegistrationSchema.optional(),
+    registrationCouncil: z.string().max(255).optional().nullable(),
   }),
 });
 
@@ -63,25 +69,29 @@ export const createDoctorSchema = z.object({
     phone: phoneSchema.optional(),
     name: z.string().min(1).max(255).optional(),
     email: emailSchema.optional(),
-    qualifications: z.string().max(1000).optional().nullable(),
+    qualifications: z.union([
+      z.array(z.string()),
+      z.string().max(1000),
+    ]).optional().nullable(),
     registrationNumber: medicalRegistrationSchema.optional().nullable(),
     registrationCouncil: z.string().max(255).optional().nullable(),
-    licenseNumber: z.string().max(255).optional().nullable(),
     specialization_id: uuidSchema.optional(),
     specializationId: uuidSchema.optional(),
-    specialization: z.string().max(100).optional().nullable(),
-    yearsOfExperience: experienceYearsSchema.optional().nullable(),
+    experienceYears: experienceYearsSchema.optional().nullable(),
     bio: z.string().max(2000).optional().nullable(),
-    consultationDuration: z.number().int().min(5).max(120).optional(),
-    consultationFeeInPerson: consultationFeeSchema.optional().nullable(),
+    slotDurationMinutes: z.number().int().min(5).max(120).optional(),
+    bufferTimeMinutes: z.number().int().min(0).max(60).optional(),
     consultationFeeOnline: consultationFeeSchema.optional().nullable(),
+    consultationFeeInPerson: consultationFeeSchema.optional().nullable(),
+    consultationFeeWalkIn: consultationFeeSchema.optional().nullable(),
     followUpFee: consultationFeeSchema.optional().nullable(),
-    bufferTime: z.number().int().min(0).max(120).optional().nullable(),
-    maxPatientsPerDay: z.number().int().min(1).max(1000).optional().nullable(),
+    maxPatientsPerSlot: z.number().int().min(1).max(100).optional().nullable(),
     profileImageUrl: z.string().url().optional().nullable(),
-    languagesSpoken: z.array(z.string()).optional(),
+    languages: z.array(z.string()).optional(),
+    onlineConsultationEnabled: z.boolean().optional(),
+    walkInEnabled: z.boolean().optional(),
   }).refine((v) => !!v.user_id || !!v.phone, { message: 'Either user_id or phone is required' })
-    .refine((v) => !!v.specializationId || !!v.specialization_id || (!!v.specialization && String(v.specialization).trim().length > 0), { message: 'Either specializationId/specialization_id or specialization text is required' }),
+    .refine((v) => !!v.specializationId || !!v.specialization_id, { message: 'specialization_id or specializationId is required' }),
 });
 
 // Get doctor availability schema
@@ -94,14 +104,12 @@ export const getDoctorAvailabilitySchema = z.object({
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     consultationType: consultationTypeSchema.optional(),
+    days: z.string().regex(/^\d+$/).transform(Number).optional(),
   }),
 });
 
 // Doctor stats schema
 export const doctorStatsSchema = z.object({
-  params: z.object({
-    doctorId: uuidSchema,
-  }),
   query: z.object({
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -115,7 +123,7 @@ export const updateDoctorStatusSchema = z.object({
     doctorId: uuidSchema,
   }),
   body: z.object({
-    status: z.enum(['active', 'inactive', 'suspended']),
+    is_active: z.boolean(),
     reason: z.string().max(500).optional(),
   }),
 });
@@ -123,7 +131,7 @@ export const updateDoctorStatusSchema = z.object({
 // Export types
 export type GetDoctorInput = z.infer<typeof getDoctorSchema>['params'];
 export type ListDoctorsInput = z.infer<typeof listDoctorsSchema>['query'];
-export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>['body'];
+export type UpdateDoctorBody = z.infer<typeof updateDoctorSchema>['body'];
 export type GetDoctorAvailabilityInput = z.infer<typeof getDoctorAvailabilitySchema>;
 export type DoctorStatsInput = z.infer<typeof doctorStatsSchema>;
 export type UpdateDoctorStatusInput = z.infer<typeof updateDoctorStatusSchema>;

@@ -1,5 +1,5 @@
 /**
- * ROZX Healthcare Platform - Centralized Error Codes
+ * Rozx Healthcare Platform - Centralized Error Codes
  * 
  * Error code format: {DOMAIN}_{ACTION}_{REASON}
  * Examples: AUTH_LOGIN_INVALID_CREDENTIALS, PAYMENT_REFUND_NOT_ALLOWED

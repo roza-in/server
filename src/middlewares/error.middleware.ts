@@ -27,7 +27,7 @@ export const errorMiddleware = (
   const requestId = (req as any).requestId || 'unknown';
   logger.error(`[${requestId}] ${statusCode} - ${message} - ${req.originalUrl} - ${req.method} - ${req.ip}`, {
     stack: err.stack,
-    user: (req as any).user?.id,
+    user: (req as any).user?.userId,
     errorCode,
   });
 

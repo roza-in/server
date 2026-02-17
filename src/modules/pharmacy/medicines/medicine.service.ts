@@ -1,38 +1,35 @@
 /**
  * Medicine Service
  * Business logic for medicine e-commerce
+ * Aligned to migration 007 — centralized ROZX pharmacy model
  */
 
 import { logger } from '../../../config/logger.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../../../common/errors/index.js';
 import { medicineRepository } from '../../../database/repositories/medicine.repo.js';
-import { pharmacyRepository } from '../../../database/repositories/pharmacy.repo.js';
 import { medicineOrderRepository } from '../../../database/repositories/medicine-order.repo.js';
+import { prescriptionRepository } from '../../../database/repositories/prescription.repo.js';
 import { PLATFORM_FEES, GST_RATE } from '../../../config/constants.js';
 import type {
     Medicine,
-    Pharmacy,
     MedicineOrder,
     MedicineOrderStatus,
-    FulfillmentType,
-    PaymentStatus
+    PaymentStatus,
 } from '../../../types/database.types.js';
 import type {
     MedicineSearchFilters,
-    PharmacySearchFilters,
     CreateMedicineOrderInput,
     OrderPricingBreakdown,
     MedicineOrderWithDetails,
     PrescriptionToOrderMapping,
-    MedicineOrderStats
+    MedicineOrderStats,
 } from './medicine.types.js';
 
 const log = logger.child('MedicineService');
 
-// Commission rate for medicine orders
+// Commission rate for medicine orders (hospital gets this %)
 const MEDICINE_COMMISSION_PERCENT = 5;
 const DELIVERY_BASE_FEE = 40;
-const DELIVERY_PER_KM_FEE = 5;
 
 class MedicineService {
     // ============================================================================
@@ -69,37 +66,6 @@ class MedicineService {
     }
 
     // ============================================================================
-    // Pharmacy Search
-    // ============================================================================
-
-    async searchPharmacies(filters: PharmacySearchFilters) {
-        const { data, total } = await pharmacyRepository.findMany({
-            city: filters.city,
-            pincode: filters.pincode,
-            type: filters.type,
-            homeDelivery: filters.homeDelivery,
-            is24x7: filters.is24x7,
-            page: filters.page || 1,
-            limit: filters.limit || 20,
-        });
-
-        return {
-            pharmacies: data,
-            total,
-            page: filters.page || 1,
-            limit: filters.limit || 20,
-        };
-    }
-
-    async getPharmacyById(id: string): Promise<Pharmacy> {
-        const pharmacy = await pharmacyRepository.findById(id);
-        if (!pharmacy) {
-            throw new NotFoundError('Pharmacy not found');
-        }
-        return pharmacy as Pharmacy;
-    }
-
-    // ============================================================================
     // Inventory Management
     // ============================================================================
 
@@ -132,7 +98,7 @@ class MedicineService {
 
         await medicineRepository.update(medicineId, {
             stock_quantity: newQuantity,
-            is_in_stock: isInStock
+            is_in_stock: isInStock,
         } as any);
     }
 
@@ -142,9 +108,9 @@ class MedicineService {
 
     async createOrder(
         patientId: string,
-        input: CreateMedicineOrderInput
+        input: CreateMedicineOrderInput,
     ): Promise<MedicineOrderWithDetails> {
-        log.info('Creating medicine order', { patientId, fulfillmentType: input.fulfillmentType });
+        log.info('Creating medicine order', { patientId });
 
         // Validate idempotency
         if (input.idempotencyKey) {
@@ -155,25 +121,9 @@ class MedicineService {
             }
         }
 
-        // Get pharmacy if specified
-        let pharmacy: Pharmacy | null = null;
-        if (input.pharmacyId) {
-            pharmacy = await pharmacyRepository.findById(input.pharmacyId);
-            if (!pharmacy) {
-                throw new NotFoundError('Pharmacy not found');
-            }
-            if (!pharmacy.is_active || pharmacy.verification_status !== 'verified') {
-                throw new BadRequestError('Pharmacy is not available');
-            }
-        }
-
-        // Validate fulfillment type requirements
-        if (input.fulfillmentType === 'platform_delivery' && !input.deliveryAddress && !input.deliveryAddressId) {
-            throw new BadRequestError('Delivery address is required for platform delivery');
-        }
-
-        if (input.fulfillmentType === 'hospital_pharmacy' && !pharmacy?.hospital_id) {
-            throw new BadRequestError('Hospital pharmacy fulfillment requires a hospital pharmacy');
+        // Delivery address is required
+        if (!input.deliveryAddress) {
+            throw new BadRequestError('Delivery address is required');
         }
 
         // Get medicine details
@@ -185,42 +135,33 @@ class MedicineService {
         }
 
         // Check prescription requirements
-        const prescriptionRequired = medicines.some(m => m.is_prescription_required);
-        if (prescriptionRequired && !input.prescriptionId) {
+        const requiresPrescription = medicines.some(m => m.is_prescription_required);
+        if (requiresPrescription && !input.prescriptionId) {
             throw new BadRequestError('Prescription is required for some medicines');
         }
 
+        // Check stock availability
+        await this.checkStockAvailability(input.items);
+
         // Calculate pricing
-        const pricing = this.calculateOrderPricing(
-            medicines,
-            input.items,
-            input.fulfillmentType,
-            pharmacy
-        );
+        const pricing = this.calculateOrderPricing(medicines, input.items);
 
-        // Prepare delivery address
-        const deliveryAddress = input.fulfillmentType === 'platform_delivery'
-            ? input.deliveryAddress
-            : null;
-
-        // Create order
+        // Create order — fields aligned to migration 007 medicine_orders table
         const orderData = {
             patient_id: patientId,
             family_member_id: input.familyMemberId || null,
             prescription_id: input.prescriptionId || null,
-            fulfillment_type: input.fulfillmentType,
-            pharmacy_id: input.pharmacyId || null,
-            delivery_address: deliveryAddress,
-            subtotal: pricing.subtotal,
+            delivery_address: input.deliveryAddress,
+            items_total: pricing.subtotal,
             discount_amount: pricing.discountAmount,
             delivery_fee: pricing.deliveryFee,
-            platform_fee: pricing.platformFee,
             gst_amount: pricing.gstAmount,
             total_amount: pricing.totalAmount,
-            pharmacy_amount: pricing.pharmacyAmount,
+            hospital_commission: pricing.hospitalCommission,
             platform_commission: pricing.platformCommission,
             status: 'pending' as MedicineOrderStatus,
             payment_status: 'pending' as PaymentStatus,
+            requires_prescription: requiresPrescription,
             prescription_verified: false,
             idempotency_key: input.idempotencyKey || null,
             placed_at: new Date().toISOString(),
@@ -230,14 +171,17 @@ class MedicineService {
             const medicine = medicines.find(m => m.id === item.medicineId)!;
             return {
                 medicine_id: item.medicineId,
-                prescription_item_index: item.prescriptionItemIndex,
+                prescription_item_index: item.prescriptionItemIndex ?? null,
                 quantity: item.quantity,
-                unit_price: medicine.mrp,
-                discount_percent: 0,
-                subtotal: medicine.mrp * item.quantity,
+                unit_mrp: medicine.mrp,
+                unit_selling_price: medicine.selling_price ?? medicine.mrp,
+                discount_percent: medicine.discount_percent ?? 0,
+                subtotal: (medicine.selling_price ?? medicine.mrp) * item.quantity,
                 medicine_name: medicine.name,
                 medicine_brand: medicine.brand || null,
-                dosage: medicine.strength || null,
+                medicine_strength: medicine.strength || null,
+                medicine_pack_size: medicine.pack_size || null,
+                requires_prescription: medicine.is_prescription_required ?? false,
                 is_substitute: false,
                 original_medicine_id: null,
                 substitution_approved: false,
@@ -245,6 +189,18 @@ class MedicineService {
         });
 
         const order = await medicineOrderRepository.createOrder(orderData as any, orderItems);
+
+        // Link prescription back to order
+        if (input.prescriptionId) {
+            await prescriptionRepository.markMedicineOrdered(input.prescriptionId, order.id).catch(err => {
+                log.warn('Failed to mark prescription as ordered', { prescriptionId: input.prescriptionId, error: err.message });
+            });
+        }
+
+        // Deduct stock for each item
+        for (const item of input.items) {
+            await this.updateStock(item.medicineId, -item.quantity);
+        }
 
         log.info('Medicine order created', { orderId: order.id, orderNumber: order.order_number });
 
@@ -254,52 +210,42 @@ class MedicineService {
     calculateOrderPricing(
         medicines: Medicine[],
         items: { medicineId: string; quantity: number }[],
-        fulfillmentType: FulfillmentType,
-        pharmacy: Pharmacy | null
     ): OrderPricingBreakdown {
-        // Calculate subtotal
+        // Calculate subtotal from selling prices
         let subtotal = 0;
         for (const item of items) {
             const medicine = medicines.find(m => m.id === item.medicineId);
             if (medicine) {
-                subtotal += medicine.mrp * item.quantity;
+                const unitPrice = medicine.selling_price ?? medicine.mrp;
+                subtotal += unitPrice * item.quantity;
             }
         }
 
-        // Discount (could be from coupon, pharmacy discount, etc.)
+        // Discount (could be from coupon)
         const discountAmount = 0;
 
         // Delivery fee
-        let deliveryFee = 0;
-        if (fulfillmentType === 'platform_delivery') {
-            deliveryFee = DELIVERY_BASE_FEE;
-            // TODO: Calculate based on distance
-        }
+        const deliveryFee = DELIVERY_BASE_FEE;
 
-        // Platform fee (commission)
-        const commissionRate = pharmacy?.platform_commission_percent || MEDICINE_COMMISSION_PERCENT;
-        const platformCommission = Math.round((subtotal * commissionRate) / 100);
+        // Commission for hospital
+        const hospitalCommission = Math.round((subtotal * MEDICINE_COMMISSION_PERCENT) / 100);
 
-        // GST on platform fee
+        // Platform commission = subtotal - hospital commission
+        const platformCommission = subtotal - hospitalCommission;
+
+        // GST on platform commission
         const gstAmount = Math.round((platformCommission * GST_RATE) / 100);
 
-        // Platform fee = commission + GST
-        const platformFee = platformCommission + gstAmount;
-
-        // Pharmacy gets: subtotal - commission
-        const pharmacyAmount = subtotal - platformCommission;
-
-        // Total = subtotal + delivery - discount
-        const totalAmount = subtotal + deliveryFee - discountAmount;
+        // Total = subtotal + delivery + gst - discount
+        const totalAmount = subtotal + deliveryFee + gstAmount - discountAmount;
 
         return {
             subtotal,
             discountAmount,
             deliveryFee,
-            platformFee,
             gstAmount,
             totalAmount,
-            pharmacyAmount,
+            hospitalCommission,
             platformCommission,
         };
     }
@@ -314,17 +260,9 @@ class MedicineService {
             throw new NotFoundError('Order not found');
         }
 
-        // Check access - patient or pharmacy owner or admin
+        // Check access — patient can view own orders
         if (userId && order.patient_id !== userId) {
-            // Check if user is pharmacy owner
-            if (order.pharmacy_id) {
-                const pharmacy = await pharmacyRepository.findById(order.pharmacy_id);
-                if (pharmacy?.owner_user_id !== userId) {
-                    throw new ForbiddenError('Access denied');
-                }
-            } else {
-                throw new ForbiddenError('Access denied');
-            }
+            throw new ForbiddenError('Access denied');
         }
 
         return order as MedicineOrderWithDetails;
@@ -339,8 +277,8 @@ class MedicineService {
     }
 
     async getOrderByIdempotencyKey(key: string): Promise<MedicineOrderWithDetails | null> {
-        // TODO: Implement idempotency key lookup
-        return null;
+        const order = await medicineOrderRepository.findByIdempotencyKey(key);
+        return order as MedicineOrderWithDetails | null;
     }
 
     async listPatientOrders(patientId: string, filters: {
@@ -355,28 +293,22 @@ class MedicineService {
             limit: filters.limit || 20,
         });
 
-        return {
-            orders: data,
-            total
-        };
+        return { orders: data, total };
     }
 
-    async listPharmacyOrders(pharmacyId: string, filters: {
+    async listHospitalOrders(hospitalId: string, filters: {
         status?: MedicineOrderStatus;
         page?: number;
         limit?: number;
     }) {
         const { data, total } = await medicineOrderRepository.listOrders({
-            pharmacyId,
+            hospitalId,
             status: filters.status,
             page: filters.page || 1,
             limit: filters.limit || 20,
         });
 
-        return {
-            orders: data,
-            total
-        };
+        return { orders: data, total };
     }
 
     // ============================================================================
@@ -384,20 +316,12 @@ class MedicineService {
     // ============================================================================
 
     async confirmOrder(
-        pharmacyUserId: string,
+        userId: string,
         orderId: string,
         estimatedReadyTime?: string,
-        notes?: string
-    ): Promise<MedicineOrder> {
+        notes?: string,
+    ): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
-
-        // Validate pharmacy ownership
-        if (order.pharmacy_id) {
-            const pharmacy = await pharmacyRepository.findById(order.pharmacy_id);
-            if (pharmacy?.owner_user_id !== pharmacyUserId) {
-                throw new ForbiddenError('Only pharmacy owner can confirm orders');
-            }
-        }
 
         if (order.status !== 'pending') {
             throw new BadRequestError(`Cannot confirm order in ${order.status} status`);
@@ -405,14 +329,15 @@ class MedicineService {
 
         await medicineOrderRepository.update(orderId, {
             status: 'confirmed',
-            pharmacy_notes: notes,
-            estimated_ready_time: estimatedReadyTime,
+            internal_notes: notes || null,
+            estimated_delivery_at: estimatedReadyTime || null,
+            confirmed_at: new Date().toISOString(),
         } as any);
 
         return this.getOrderById(orderId);
     }
 
-    async markAsProcessing(pharmacyUserId: string, orderId: string): Promise<MedicineOrder> {
+    async markAsProcessing(userId: string, orderId: string): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
 
         if (order.status !== 'confirmed') {
@@ -423,70 +348,90 @@ class MedicineService {
         return this.getOrderById(orderId);
     }
 
-    async markAsReady(pharmacyUserId: string, orderId: string): Promise<MedicineOrder> {
+    async markAsReady(userId: string, orderId: string): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
 
         if (order.status !== 'processing') {
             throw new BadRequestError(`Cannot mark as ready from ${order.status} status`);
         }
 
-        await medicineOrderRepository.update(orderId, { status: 'ready_for_pickup' } as any);
+        await medicineOrderRepository.update(orderId, {
+            status: 'ready_for_pickup',
+            packed_at: new Date().toISOString(),
+        } as any);
         return this.getOrderById(orderId);
     }
 
     async dispatchOrder(
-        pharmacyUserId: string,
+        userId: string,
         orderId: string,
-        deliveryPartnerId?: string,
-        trackingId?: string
-    ): Promise<MedicineOrder> {
+        deliveryPartner?: string,
+        trackingId?: string,
+    ): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
 
         if (order.status !== 'ready_for_pickup' && order.status !== 'processing') {
             throw new BadRequestError(`Cannot dispatch from ${order.status} status`);
         }
 
-        if (order.fulfillment_type !== 'platform_delivery') {
-            throw new BadRequestError('Only platform delivery orders can be dispatched');
-        }
-
         // Generate delivery OTP
         const deliveryOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
         await medicineOrderRepository.update(orderId, {
-            status: 'out_for_delivery',
-            delivery_partner_id: deliveryPartnerId,
-            delivery_tracking_id: trackingId,
+            status: 'dispatched',
+            delivery_partner: deliveryPartner || null,
+            delivery_tracking_id: trackingId || null,
             delivery_otp: deliveryOtp,
+            dispatched_at: new Date().toISOString(),
         } as any);
+
+        // Record delivery tracking event
+        await medicineOrderRepository.addDeliveryTrackingEvent({
+            order_id: orderId,
+            status: 'dispatched',
+            status_message: 'Order dispatched for delivery',
+            source: 'system',
+        }).catch(err => log.warn('Failed to add dispatch tracking event', { orderId, error: err.message }));
 
         return this.getOrderById(orderId);
     }
 
-    async completeDelivery(orderId: string, otp: string): Promise<MedicineOrder> {
+    async completeDelivery(orderId: string, otp: string): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
 
-        if (order.status !== 'out_for_delivery' && order.status !== 'ready_for_pickup') {
+        if (order.status !== 'dispatched' && order.status !== 'out_for_delivery') {
             throw new BadRequestError(`Cannot complete from ${order.status} status`);
         }
 
-        // Verify OTP for delivery
-        if (order.fulfillment_type === 'platform_delivery' && order.delivery_otp !== otp) {
+        // Verify delivery OTP
+        if (order.delivery_otp && order.delivery_otp !== otp) {
             throw new BadRequestError('Invalid delivery OTP');
         }
 
-        await medicineOrderRepository.update(orderId, { status: 'delivered' } as any);
+        await medicineOrderRepository.update(orderId, {
+            status: 'delivered',
+            delivered_at: new Date().toISOString(),
+        } as any);
+
+        // Record delivery tracking event
+        await medicineOrderRepository.addDeliveryTrackingEvent({
+            order_id: orderId,
+            status: 'delivered',
+            status_message: 'Order delivered successfully',
+            source: 'system',
+        }).catch(err => log.warn('Failed to add delivery tracking event', { orderId, error: err.message }));
+
         return this.getOrderById(orderId);
     }
 
     async cancelOrder(
         userId: string,
         orderId: string,
-        reason: string
-    ): Promise<MedicineOrder> {
+        reason: string,
+    ): Promise<MedicineOrderWithDetails> {
         const order = await this.getOrderById(orderId);
 
-        // Check if user can cancel
+        // Can only cancel pending or confirmed orders
         const canCancel = ['pending', 'confirmed'].includes(order.status);
         if (!canCancel) {
             throw new BadRequestError(`Cannot cancel order in ${order.status} status`);
@@ -496,9 +441,56 @@ class MedicineService {
             status: 'cancelled',
             cancellation_reason: reason,
             cancelled_by: userId,
+            cancelled_at: new Date().toISOString(),
         } as any);
 
+        // Restore stock for cancelled orders
+        const orderItems = order.medicine_order_items || [];
+        for (const item of orderItems) {
+            await this.updateStock(item.medicine_id, item.quantity);
+        }
+
         return this.getOrderById(orderId);
+    }
+
+    // ============================================================================
+    // Delivery Tracking & Returns
+    // ============================================================================
+
+    async getDeliveryTracking(orderId: string, userId?: string) {
+        await this.getOrderById(orderId, userId);
+        return medicineOrderRepository.getDeliveryTracking(orderId);
+    }
+
+    async createReturn(
+        userId: string,
+        orderId: string,
+        returnData: { reason: string; reason_details?: string; items?: any[]; photos?: string[]; refund_amount?: number },
+    ) {
+        const order = await this.getOrderById(orderId, userId);
+
+        if (order.status !== 'delivered') {
+            throw new BadRequestError('Can only return delivered orders');
+        }
+
+        return medicineOrderRepository.createReturn({
+            order_id: orderId,
+            reason: returnData.reason,
+            reason_details: returnData.reason_details,
+            items: returnData.items || [],
+            photos: returnData.photos,
+            refund_amount: returnData.refund_amount || 0,
+            initiated_by: userId,
+        });
+    }
+
+    async getReturns(orderId: string, userId?: string) {
+        await this.getOrderById(orderId, userId);
+        return medicineOrderRepository.getReturns(orderId);
+    }
+
+    async getUnorderedPrescriptions(patientId: string) {
+        return prescriptionRepository.findUnorderedByPatient(patientId);
     }
 
     // ============================================================================
@@ -506,15 +498,141 @@ class MedicineService {
     // ============================================================================
 
     async mapPrescriptionToMedicines(prescriptionId: string): Promise<PrescriptionToOrderMapping> {
-        // TODO: Implement prescription parsing and medicine matching
-        // This would:
-        // 1. Get prescription from prescriptions table
-        // 2. Parse medications array
-        // 3. Match each medication to medicines catalog
-        // 4. Find alternative/generic options
-        // 5. Find nearby pharmacies with stock
+        // 1. Get prescription
+        const prescription = await prescriptionRepository.findById(prescriptionId);
+        if (!prescription) {
+            throw new NotFoundError('Prescription not found');
+        }
 
-        throw new BadRequestError('Prescription mapping not yet implemented');
+        // 2. Check if already ordered
+        const existingOrder = await medicineOrderRepository.findByPrescriptionId(prescriptionId);
+        if (existingOrder) {
+            log.info('Prescription already has an active order', { prescriptionId, orderId: existingOrder.id });
+        }
+
+        // 3. Parse medications JSONB array
+        const medications: any[] = (prescription as any).medications || [];
+        if (!medications.length) {
+            throw new BadRequestError('Prescription has no medications');
+        }
+
+        // 4. Match each medication to medicines catalog
+        const mappedMedicines = await Promise.all(
+            medications.map(async (med: any) => {
+                const medName = med.name || med.medicine_name || '';
+                const genericName = med.generic_name || med.genericName || '';
+
+                let matchedMedicine: any = null;
+                let alternatives: any[] = [];
+                let confidence = 0;
+
+                if (medName) {
+                    const searchResults = await medicineRepository.searchByName(medName);
+
+                    if (searchResults.length > 0) {
+                        matchedMedicine = searchResults[0];
+                        confidence = searchResults[0].name.toLowerCase() === medName.toLowerCase() ? 1.0 : 0.7;
+                        alternatives = searchResults.slice(1, 4).map((m: any) => ({
+                            id: m.id,
+                            name: m.name,
+                            mrp: m.mrp,
+                            isGeneric: !!m.generic_name,
+                        }));
+                    }
+
+                    if (!matchedMedicine && genericName) {
+                        const genericResults = await medicineRepository.searchByName(genericName);
+                        if (genericResults.length > 0) {
+                            matchedMedicine = genericResults[0];
+                            confidence = 0.5;
+                            alternatives = genericResults.slice(1, 4).map((m: any) => ({
+                                id: m.id,
+                                name: m.name,
+                                mrp: m.mrp,
+                                isGeneric: true,
+                            }));
+                        }
+                    }
+                }
+
+                return {
+                    name: medName,
+                    dosage: med.dosage || med.dose || '',
+                    frequency: med.frequency || '',
+                    duration: med.duration || '',
+                    matchedMedicineId: matchedMedicine?.id,
+                    matchedMedicineName: matchedMedicine?.name,
+                    matchConfidence: confidence,
+                    alternatives,
+                };
+            }),
+        );
+
+        return {
+            prescriptionId,
+            patientId: (prescription as any).patient_id,
+            medicines: mappedMedicines,
+        };
+    }
+
+    /**
+     * Create order directly from a prescription.
+     * Maps prescription → validates → creates order in one call.
+     */
+    async createOrderFromPrescription(
+        patientId: string,
+        prescriptionId: string,
+        deliveryAddress: any,
+        selectedMedicineIds?: string[],
+    ): Promise<MedicineOrderWithDetails> {
+        // 1. Map prescription to medicines
+        const mapping = await this.mapPrescriptionToMedicines(prescriptionId);
+
+        // 2. Verify patient owns this prescription
+        if (mapping.patientId !== patientId) {
+            throw new ForbiddenError('This prescription does not belong to you');
+        }
+
+        // 3. Check for existing order
+        const existingOrder = await medicineOrderRepository.findByPrescriptionId(prescriptionId);
+        if (existingOrder) {
+            throw new BadRequestError('An order already exists for this prescription');
+        }
+
+        // 4. Build order items from matched medicines
+        const items = mapping.medicines
+            .filter(m => {
+                if (!m.matchedMedicineId) return false;
+                if (selectedMedicineIds?.length) return selectedMedicineIds.includes(m.matchedMedicineId);
+                return true;
+            })
+            .map((m, index) => ({
+                medicineId: m.matchedMedicineId!,
+                quantity: 1,
+                prescriptionItemIndex: index,
+            }));
+
+        if (items.length === 0) {
+            throw new BadRequestError('No medicines from this prescription are available in our catalog');
+        }
+
+        // 5. Create the order
+        const order = await this.createOrder(patientId, {
+            prescriptionId,
+            items,
+            deliveryAddress,
+        });
+
+        // 6. Link order back to prescription
+        await prescriptionRepository.markMedicineOrdered(prescriptionId, order.id);
+
+        log.info('Order created from prescription', {
+            prescriptionId,
+            orderId: order.id,
+            itemCount: items.length,
+        });
+
+        return order;
     }
 
     // ============================================================================
@@ -523,20 +641,10 @@ class MedicineService {
 
     async getOrderStats(
         userId: string,
-        userRole: 'patient' | 'pharmacy',
-        pharmacyId?: string
+        userRole: string,
+        hospitalId?: string,
     ): Promise<MedicineOrderStats> {
-        if (userRole === 'pharmacy') {
-            if (!pharmacyId) {
-                const pharmacy = await pharmacyRepository.findOne({ owner_user_id: userId } as any);
-                pharmacyId = pharmacy?.id;
-            }
-            if (!pharmacyId) {
-                throw new NotFoundError('Pharmacy not found');
-            }
-        }
-
-        const stats = await medicineOrderRepository.getStats(pharmacyId || userId);
+        const stats = await medicineOrderRepository.getStats(hospitalId || userId);
 
         return {
             totalOrders: stats.totalOrders,
@@ -545,9 +653,7 @@ class MedicineService {
             cancelledOrders: stats.cancelledOrders,
             totalRevenue: stats.totalRevenue,
             platformCommission: stats.platformCommission,
-            averageOrderValue: stats.totalOrders > 0 ? stats.totalRevenue / stats.deliveredOrders : 0,
-            ordersByStatus: {} as any,
-            ordersByFulfillmentType: {} as any,
+            averageOrderValue: stats.deliveredOrders > 0 ? stats.totalRevenue / stats.deliveredOrders : 0,
         };
     }
 }

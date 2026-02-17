@@ -27,9 +27,9 @@ import {
 const router = Router();
 
 /**
- * @router Posts /api/v1/doctors
- * @desc Doctor routes
- * @access Public
+ * @route POST /api/v1/doctors
+ * @desc Add a new doctor (hospital only)
+ * @access Private (hospital)
  */
 router.post('/', authMiddleware, roleGuard('hospital'), validate(createDoctorSchema), addDoctor);
 
@@ -43,8 +43,16 @@ router.get('/', validate(listDoctorsSchema), listDoctors);
 /**
  * @route GET /api/v1/doctors/specializations
  * @desc List specializations
+ * @access Public
  */
 router.get('/specializations', getSpecializations);
+
+/**
+ * @route GET /api/v1/doctors/me/stats
+ * @desc Get current doctor's statistics
+ * @access Private (doctor)
+ */
+router.get('/me/stats', authMiddleware, roleGuard('doctor'), validate(doctorStatsSchema), getDoctorStats);
 
 /**
  * @route GET /api/v1/doctors/:doctorId
@@ -58,7 +66,7 @@ router.get('/:doctorId', validate(getDoctorSchema), getDoctor);
  * @desc Get doctor public profile
  * @access Public
  */
-router.get('/:doctorId/profile', getDoctorProfile);
+router.get('/:doctorId/profile', validate(getDoctorSchema), getDoctorProfile);
 
 /**
  * @route PATCH /api/v1/doctors/:doctorId
@@ -70,32 +78,23 @@ router.patch('/:doctorId', authMiddleware, validate(updateDoctorSchema), updateD
 /**
  * @route PATCH /api/v1/doctors/:doctorId/status
  * @desc Update doctor status (hospital/admin)
- * @access Private (hospital)
+ * @access Private (hospital, admin)
  */
-router.patch('/:doctorId/status', authMiddleware, roleGuard('hospital'), validate(updateDoctorStatusSchema), updateDoctorStatus);
-
-/**
- * @route GET /api/v1/doctors/me/stats
- * @desc Get doctor statistics
- * @access Private (doctor)
- */
-// "me" isn't a uuid, so we might need a separate route or careful ordering if we used :doctorId for "me"
-// But here the route is explicit /me/stats, so no param validation needed for ID
-router.get('/me/stats', authMiddleware, roleGuard('doctor'), getDoctorStats); // Params are usually from token, but might support query filters
+router.patch('/:doctorId/status', authMiddleware, roleGuard('hospital', 'admin'), validate(updateDoctorStatusSchema), updateDoctorStatus);
 
 /**
  * @route GET /api/v1/doctors/:doctorId/availability
- * @desc Get doctor availability for a date
+ * @desc Get doctor availability
  * @access Public
  */
-router.get('/:doctorId/availability', getDoctorAvailability);
+router.get('/:doctorId/availability', validate(getDoctorAvailabilitySchema), getDoctorAvailability);
 
 /**
  * @route GET /api/v1/doctors/:doctorId/schedule
  * @desc Get doctor weekly schedule
  * @access Public
  */
-router.get('/:doctorId/schedule', getDoctorSchedule);
+router.get('/:doctorId/schedule', validate(getDoctorSchema), getDoctorSchedule);
 
 export const doctorRoutes = router;
 export default router;

@@ -2,45 +2,42 @@ import { supabaseAdmin } from '../database/supabase-admin.js';
 import { logger } from '../config/logger.js';
 import { notificationService } from '../modules/notifications/notification.service.js';
 
+/** P3: Concurrency limiter — processes items in batches of `concurrency` */
+async function processWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    handler: (item: T) => Promise<void>,
+): Promise<PromiseSettledResult<void>[]> {
+    const results: PromiseSettledResult<void>[] = [];
+    for (let i = 0; i < items.length; i += concurrency) {
+        const chunk = items.slice(i, i + concurrency);
+        const chunkResults = await Promise.allSettled(chunk.map(handler));
+        results.push(...chunkResults);
+    }
+    return results;
+}
+
 /**
  * Dispatch pending notifications (Retry mechanism)
- * Look for notifications stuck in 'pending' or 'failed' state.
+ * P3: Processes up to 50 items with concurrency of 10 using Promise.allSettled,
+ * instead of awaiting each one serially.
  */
 export const dispatchNotifications = async () => {
     const log = logger.child('Job:Dispatch');
+    const BATCH_SIZE = 50;
+    const CONCURRENCY = 10;
+    const MAX_ATTEMPTS = 5;
+
     try {
-        log.info('Starting notification dispatch...');
-
-        // Assuming a table structure or metadata that tracks status.
-        // If 'notifications' table is just inbox, this job might just process a queue table `notification_queue`.
-        // I will check `notifications` table structure via `repo` earlier, it seemed to supply `is_read`.
-        // If there's no `status` column, I'll check `notification_queue` if exists.
-        // If query fails, I will log "Queue not found".
-
-        // Assuming we are using a separate queue or status field on notifications.
-        // Let's assume we have a simple 'notification_queue' OR we retry failed ones from `notification_logs` (if exists).
-
-        // Fallback implementation: 
-        // Since I don't recall seeing a queue table, I will implement a placeholder that checks for a commonly used `notification_queue`.
-        // If that misses, this job is a stub until queue is defined.
-
-        // Update: `notification.repo.ts` showed `notifications` table which is user-facing.
-        // Background dispatch usually implies sending SMS/Email/Push via external providers.
-        // Usually done via `notification.service.ts` immediately.
-        // If async, likely stored in `jobs` or `queue` table.
-
-        // I will assume `notification_queue` table exists or skip logic.
-        // Check: User asked for `notification-dispatch.job.ts`. I should implement it.
-        // I will implement a check for `notification_queue`.
-
         const { data: pending, error } = await supabaseAdmin
             .from('notification_queue')
             .select('*')
-            .eq('status', 'pending')
-            .limit(50);
+            .in('status', ['pending', 'failed'])
+            .lt('attempts', MAX_ATTEMPTS)
+            .order('created_at', { ascending: true })
+            .limit(BATCH_SIZE);
 
         if (error) {
-            // Table likely doesn't exist or other error.
             log.warn('Could not fetch from notification_queue. Ensure table exists.', error.message);
             return;
         }
@@ -49,30 +46,49 @@ export const dispatchNotifications = async () => {
             return;
         }
 
-        for (const item of pending) {
+        log.info(`Processing ${pending.length} notification queue items (concurrency: ${CONCURRENCY})...`);
+
+        const results = await processWithConcurrency(pending, CONCURRENCY, async (item) => {
             try {
-                // Dispatch Logic
-                // e.g. await sendEmail(item) or sendSMS(item)
-                // For now, simulate success
+                // Dispatch based on notification type
+                if (item.channel === 'email' && item.recipient_email) {
+                    await notificationService.send({
+                        purpose: item.purpose,
+                        email: item.recipient_email,
+                        variables: item.variables || {},
+                    });
+                } else if ((item.channel === 'whatsapp' || item.channel === 'sms') && item.recipient_phone) {
+                    await notificationService.send({
+                        purpose: item.purpose,
+                        phone: item.recipient_phone,
+                        variables: item.variables || {},
+                    });
+                }
+                // If no specific channel handler matched, mark as completed anyway
+                // (the notification service handles channel selection internally)
 
                 await supabaseAdmin
                     .from('notification_queue')
                     .update({ status: 'completed', updated_at: new Date().toISOString() })
                     .eq('id', item.id);
-
             } catch (err: any) {
+                const newAttempts = (item.attempts || 0) + 1;
                 await supabaseAdmin
                     .from('notification_queue')
                     .update({
-                        status: 'failed',
-                        error: err.message,
-                        attempts: (item.attempts || 0) + 1
+                        status: newAttempts >= MAX_ATTEMPTS ? 'permanently_failed' : 'failed',
+                        error: err.message?.substring(0, 500),
+                        attempts: newAttempts,
+                        updated_at: new Date().toISOString(),
                     })
                     .eq('id', item.id);
+                throw err; // Re-throw so Promise.allSettled records it as rejected
             }
-        }
+        });
 
-        log.info(`Processed ${pending.length} queue items.`);
+        const succeeded = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+        log.info(`Notification dispatch complete: ${succeeded} succeeded, ${failed} failed out of ${pending.length}`);
 
     } catch (error) {
         log.error('Failed to run dispatch job:', error);

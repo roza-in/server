@@ -4,8 +4,8 @@ import { doctorRepository } from '../../database/repositories/doctor.repo.js';
 import { NotFoundError, ForbiddenError, BadRequestError, ConflictError } from '../../common/errors/index.js';
 import { slotService } from './slot.service.js';
 import type {
-  DoctorSchedule,
-  ScheduleOverride,
+  DoctorScheduleDTO,
+  ScheduleOverrideDTO,
   WeeklySchedule,
   DayOfWeek,
   ScheduleOverrideType,
@@ -62,6 +62,7 @@ class ScheduleService {
       if (weeklySchedule[day]) {
         weeklySchedule[day].schedules.push({
           id: schedule.id,
+          consultationType: schedule.consultation_type,
           startTime: schedule.start_time,
           endTime: schedule.end_time,
           breakStart: schedule.break_start,
@@ -83,7 +84,7 @@ class ScheduleService {
     userId: string,
     role: string,
     data: CreateScheduleInput
-  ): Promise<DoctorSchedule> {
+  ): Promise<DoctorScheduleDTO> {
     // Verify hospital-only permission
     await this.verifyHospitalPermission(doctorId, userId, role);
 
@@ -110,6 +111,7 @@ class ScheduleService {
       .select('id')
       .eq('doctor_id', doctorId)
       .eq('day_of_week', data.dayOfWeek)
+      .eq('consultation_type', data.consultationType)
       .eq('start_time', data.startTime)
       .eq('is_active', false)
       .maybeSingle();
@@ -121,6 +123,7 @@ class ScheduleService {
       const { data: updated, error } = await this.supabase
         .from('doctor_schedules')
         .update({
+          consultation_type: data.consultationType,
           end_time: data.endTime,
           break_start: data.breakStart || null,
           break_end: data.breakEnd || null,
@@ -141,6 +144,7 @@ class ScheduleService {
         .insert({
           doctor_id: doctorId,
           day_of_week: data.dayOfWeek,
+          consultation_type: data.consultationType,
           start_time: data.startTime,
           end_time: data.endTime,
           break_start: data.breakStart || null,
@@ -179,7 +183,7 @@ class ScheduleService {
     userId: string,
     role: string,
     data: BulkCreateSchedulesInput
-  ): Promise<DoctorSchedule[]> {
+  ): Promise<DoctorScheduleDTO[]> {
     // Verify hospital-only permission
     await this.verifyHospitalPermission(doctorId, userId, role);
 
@@ -200,6 +204,7 @@ class ScheduleService {
     const schedulesToInsert = data.schedules.map(s => ({
       doctor_id: doctorId,
       day_of_week: s.dayOfWeek,
+      consultation_type: s.consultationType,
       start_time: s.startTime,
       end_time: s.endTime,
       break_start: s.breakStart || null,
@@ -236,7 +241,7 @@ class ScheduleService {
     userId: string,
     role: string,
     data: UpdateScheduleInput
-  ): Promise<DoctorSchedule> {
+  ): Promise<DoctorScheduleDTO> {
     // Get schedule
     const { data: schedule, error: fetchError } = await this.supabase
       .from('doctor_schedules')
@@ -340,7 +345,7 @@ class ScheduleService {
     userId: string,
     role: string,
     data: CreateOverrideInput
-  ): Promise<ScheduleOverride> {
+  ): Promise<ScheduleOverrideDTO> {
     // Verify hospital-only permission
     await this.verifyHospitalPermission(doctorId, userId, role);
 
@@ -410,7 +415,7 @@ class ScheduleService {
     doctorId: string,
     startDate?: string,
     endDate?: string
-  ): Promise<ScheduleOverride[]> {
+  ): Promise<ScheduleOverrideDTO[]> {
     let query = this.supabase
       .from('schedule_overrides')
       .select('*')
@@ -566,13 +571,13 @@ class ScheduleService {
 
   /**
    * Transform schedule row to API response
-   * NOTE: consultationType removed - use doctor.consultation_types instead
    */
-  private transformSchedule(row: any): DoctorSchedule {
+  private transformSchedule(row: any): DoctorScheduleDTO {
     return {
       id: row.id,
       doctorId: row.doctor_id,
       dayOfWeek: row.day_of_week,
+      consultationType: row.consultation_type,
       startTime: row.start_time,
       endTime: row.end_time,
       breakStart: row.break_start,
@@ -588,7 +593,7 @@ class ScheduleService {
   /**
    * Transform override row to API response
    */
-  private transformOverride(row: any): ScheduleOverride {
+  private transformOverride(row: any): ScheduleOverrideDTO {
     return {
       id: row.id,
       doctorId: row.doctor_id,

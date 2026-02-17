@@ -1,7 +1,19 @@
 import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { logger } from '../../config/logger.js';
 import { NotFoundError, BadRequestError } from '../../common/errors/index.js';
-import type { TicketFilters, CreateTicketInput, ReplyTicketInput, UpdateTicketInput, ResolveTicketInput } from './support.types.js';
+import type {
+    SupportTicketDTO,
+    SupportTicketDetailDTO,
+    TicketMessageDTO,
+    TicketFilters,
+} from './support.types.js';
+import type {
+    CreateTicketInput,
+    ReplyTicketInput,
+    UpdateTicketInput,
+    ResolveTicketInput,
+    RateTicketInput,
+} from './support.validator.js';
 
 /**
  * Support Service - Domain module for support tickets
@@ -17,7 +29,7 @@ class SupportService {
     /**
      * Create support ticket
      */
-    async create(userId: string, input: CreateTicketInput): Promise<any> {
+    async create(userId: string, input: CreateTicketInput): Promise<SupportTicketDTO> {
         const ticketNumber = this.generateTicketNumber();
 
         const { data, error } = await this.supabase
@@ -29,9 +41,12 @@ class SupportService {
                 description: input.description,
                 category: input.category,
                 priority: input.priority || 'medium',
-                appointment_id: input.appointment_id || null,
-                payment_id: input.payment_id || null,
+                appointment_id: input.appointmentId || null,
+                medicine_order_id: input.medicineOrderId || null,
+                payment_id: input.paymentId || null,
+                attachments: input.attachments || null,
                 status: 'open',
+                sla_breached: false,
             })
             .select()
             .single();
@@ -41,13 +56,13 @@ class SupportService {
             throw new BadRequestError('Failed to create support ticket');
         }
 
-        return data;
+        return this.transformTicket(data);
     }
 
     /**
      * List tickets with filters
      */
-    async list(filters: TicketFilters): Promise<any> {
+    async list(filters: TicketFilters): Promise<{ tickets: SupportTicketDTO[]; total: number; page: number; limit: number; totalPages: number }> {
         const page = filters.page || 1;
         const limit = Math.min(filters.limit || 20, 100);
         const offset = (page - 1) * limit;
@@ -85,7 +100,7 @@ class SupportService {
         }
 
         return {
-            tickets: data || [],
+            tickets: (data || []).map(t => this.transformTicket(t)),
             total: count || 0,
             page,
             limit,
@@ -94,9 +109,9 @@ class SupportService {
     }
 
     /**
-     * Get ticket by ID with replies
+     * Get ticket by ID with messages
      */
-    async getById(ticketId: string): Promise<any> {
+    async getById(ticketId: string): Promise<SupportTicketDetailDTO> {
         const { data: ticket, error } = await this.supabase
             .from('support_tickets')
             .select(`
@@ -110,88 +125,115 @@ class SupportService {
             throw new NotFoundError('Ticket not found');
         }
 
-        // Get replies
-        const { data: replies } = await this.supabase
-            .from('ticket_replies')
-            .select(`
-        *,
-        user:users(id, name, role)
-      `)
+        // Get messages (was "ticket_replies" — DB table is "ticket_messages")
+        const { data: messages } = await this.supabase
+            .from('ticket_messages')
+            .select('*')
             .eq('ticket_id', ticketId)
             .order('created_at', { ascending: true });
 
-        return { ...ticket, replies: replies || [] };
+        const dto = this.transformTicket(ticket) as SupportTicketDetailDTO;
+        dto.messages = (messages || []).map(m => this.transformMessage(m));
+        dto.user = ticket.user || undefined;
+        return dto;
     }
 
     /**
      * Get user's tickets
      */
-    async getUserTickets(userId: string, page = 1, limit = 20): Promise<any> {
+    async getUserTickets(userId: string, page = 1, limit = 20): Promise<{ tickets: SupportTicketDTO[]; total: number; page: number; limit: number; totalPages: number }> {
         return this.list({ userId, page, limit });
     }
 
     /**
-     * Add reply to ticket
+     * Add message to ticket
      */
-    async reply(ticketId: string, userId: string, input: ReplyTicketInput): Promise<any> {
+    async reply(ticketId: string, userId: string, userRole: string, input: ReplyTicketInput): Promise<TicketMessageDTO> {
+        // Verify ticket exists
+        const { data: ticket, error: ticketError } = await this.supabase
+            .from('support_tickets')
+            .select('id, status, first_response_at')
+            .eq('id', ticketId)
+            .single();
+
+        if (ticketError || !ticket) {
+            throw new NotFoundError('Ticket not found');
+        }
+
         const { data, error } = await this.supabase
-            .from('ticket_replies')
+            .from('ticket_messages')
             .insert({
                 ticket_id: ticketId,
-                user_id: userId,
+                sender_id: userId,
+                sender_role: userRole,
                 message: input.message,
-                attachments: input.attachments || [],
-                is_internal: input.is_internal || false,
+                attachments: input.attachments || null,
+                is_internal: input.isInternal || false,
             })
             .select()
             .single();
 
         if (error) {
-            this.log.error('Failed to add reply', error);
-            throw new BadRequestError('Failed to add reply');
+            this.log.error('Failed to add message', error);
+            throw new BadRequestError('Failed to add message');
         }
 
-        // Update ticket status to in_progress if it was open
+        // Update ticket: set first_response_at if admin's first reply
+        const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
+        if (ticket.status === 'open') {
+            updateData.status = 'in_progress';
+        }
+        if (!ticket.first_response_at && userRole === 'admin') {
+            updateData.first_response_at = new Date().toISOString();
+        }
+
         await this.supabase
             .from('support_tickets')
-            .update({ status: 'in_progress', updated_at: new Date().toISOString() })
-            .eq('id', ticketId)
-            .eq('status', 'open');
+            .update(updateData)
+            .eq('id', ticketId);
 
-        return data;
+        return this.transformMessage(data);
     }
 
     /**
      * Update ticket (status, priority, assignment)
      */
-    async update(ticketId: string, input: UpdateTicketInput): Promise<any> {
+    async update(ticketId: string, userId: string, input: UpdateTicketInput): Promise<SupportTicketDTO> {
+        const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
+
+        if (input.status !== undefined) updateData.status = input.status;
+        if (input.priority !== undefined) updateData.priority = input.priority;
+        if (input.assignedTo !== undefined) {
+            updateData.assigned_to = input.assignedTo;
+            updateData.assigned_at = input.assignedTo ? new Date().toISOString() : null;
+        }
+
         const { data, error } = await this.supabase
             .from('support_tickets')
-            .update({
-                ...input,
-                updated_at: new Date().toISOString(),
-            })
+            .update(updateData)
             .eq('id', ticketId)
             .select()
             .single();
 
         if (error) {
+            this.log.error('Failed to update ticket', error);
             throw new BadRequestError('Failed to update ticket');
         }
 
-        return data;
+        return this.transformTicket(data);
     }
 
     /**
      * Resolve ticket
      */
-    async resolve(ticketId: string, input: ResolveTicketInput): Promise<any> {
+    async resolve(ticketId: string, userId: string, input: ResolveTicketInput): Promise<SupportTicketDTO> {
         const { data, error } = await this.supabase
             .from('support_tickets')
             .update({
                 status: 'resolved',
-                resolution: input.resolution,
+                resolution_notes: input.resolutionNotes,
                 resolved_at: new Date().toISOString(),
+                resolved_by: userId,
                 updated_at: new Date().toISOString(),
             })
             .eq('id', ticketId)
@@ -199,16 +241,17 @@ class SupportService {
             .single();
 
         if (error) {
+            this.log.error('Failed to resolve ticket', error);
             throw new BadRequestError('Failed to resolve ticket');
         }
 
-        return data;
+        return this.transformTicket(data);
     }
 
     /**
      * Close ticket
      */
-    async close(ticketId: string): Promise<any> {
+    async close(ticketId: string): Promise<SupportTicketDTO> {
         const { data, error } = await this.supabase
             .from('support_tickets')
             .update({
@@ -220,10 +263,51 @@ class SupportService {
             .single();
 
         if (error) {
+            this.log.error('Failed to close ticket', error);
             throw new BadRequestError('Failed to close ticket');
         }
 
-        return data;
+        return this.transformTicket(data);
+    }
+
+    /**
+     * Rate resolved ticket (customer satisfaction)
+     */
+    async rate(ticketId: string, userId: string, input: RateTicketInput): Promise<SupportTicketDTO> {
+        // Verify ticket is resolved/closed and belongs to the user
+        const { data: ticket, error: fetchError } = await this.supabase
+            .from('support_tickets')
+            .select('id, user_id, status')
+            .eq('id', ticketId)
+            .single();
+
+        if (fetchError || !ticket) {
+            throw new NotFoundError('Ticket not found');
+        }
+        if (ticket.user_id !== userId) {
+            throw new BadRequestError('You can only rate your own tickets');
+        }
+        if (ticket.status !== 'resolved' && ticket.status !== 'closed') {
+            throw new BadRequestError('Can only rate resolved or closed tickets');
+        }
+
+        const { data, error } = await this.supabase
+            .from('support_tickets')
+            .update({
+                satisfaction_rating: input.satisfactionRating,
+                satisfaction_feedback: input.satisfactionFeedback || null,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', ticketId)
+            .select()
+            .single();
+
+        if (error) {
+            this.log.error('Failed to rate ticket', error);
+            throw new BadRequestError('Failed to rate ticket');
+        }
+
+        return this.transformTicket(data);
     }
 
     /**
@@ -242,7 +326,52 @@ class SupportService {
             resolvedCount: resolved.count || 0,
         };
     }
+
+    // ============================================================
+    // PRIVATE HELPERS
+    // ============================================================
+
+    private transformTicket(row: any): SupportTicketDTO {
+        return {
+            id: row.id,
+            ticketNumber: row.ticket_number,
+            userId: row.user_id,
+            category: row.category,
+            priority: row.priority,
+            subject: row.subject,
+            description: row.description,
+            appointmentId: row.appointment_id,
+            medicineOrderId: row.medicine_order_id,
+            paymentId: row.payment_id,
+            attachments: row.attachments,
+            status: row.status,
+            assignedTo: row.assigned_to,
+            assignedAt: row.assigned_at,
+            resolvedAt: row.resolved_at,
+            resolvedBy: row.resolved_by,
+            resolutionNotes: row.resolution_notes,
+            satisfactionRating: row.satisfaction_rating,
+            satisfactionFeedback: row.satisfaction_feedback,
+            firstResponseAt: row.first_response_at,
+            slaDueAt: row.sla_due_at,
+            slaBreached: row.sla_breached,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        };
+    }
+
+    private transformMessage(row: any): TicketMessageDTO {
+        return {
+            id: row.id,
+            ticketId: row.ticket_id,
+            senderId: row.sender_id,
+            senderRole: row.sender_role,
+            message: row.message,
+            attachments: row.attachments,
+            isInternal: row.is_internal,
+            createdAt: row.created_at,
+        };
+    }
 }
 
 export const supportService = new SupportService();
-

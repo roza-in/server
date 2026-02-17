@@ -128,4 +128,65 @@ export const cacheGetOrSet = async <T>(
     }
 };
 
+/**
+ * Invalidate a specific cache key
+ */
+export const cacheInvalidate = async (key: string): Promise<void> => {
+    const client = getRedisClient();
+    if (!client) return;
+    try {
+        await client.del(key);
+    } catch (error) {
+        logger.error(`Failed to invalidate cache key: ${key}`, error);
+    }
+};
+
+/**
+ * Invalidate multiple cache keys by prefix using SCAN
+ * Only works with Upstash REST — falls back to known-key deletion
+ */
+export const cacheInvalidateByPrefix = async (prefix: string): Promise<void> => {
+    const client = getRedisClient();
+    if (!client) return;
+    try {
+        // Upstash REST API supports scan with MATCH
+        let cursor = 0;
+        const keysToDelete: string[] = [];
+        do {
+            const [nextCursor, keys] = await client.scan(cursor, { match: `${prefix}*`, count: 100 });
+            cursor = typeof nextCursor === 'string' ? parseInt(nextCursor, 10) : nextCursor;
+            keysToDelete.push(...keys);
+        } while (cursor !== 0);
+
+        if (keysToDelete.length > 0) {
+            const pipeline = client.pipeline();
+            for (const key of keysToDelete) {
+                pipeline.del(key);
+            }
+            await pipeline.exec();
+        }
+    } catch (error) {
+        logger.error(`Failed to invalidate cache by prefix: ${prefix}`, error);
+    }
+};
+
+/** Well-known cache key builders for hot paths */
+export const CacheKeys = {
+    doctorAvailability: (doctorId: string) => `cache:doctor:availability:${doctorId}`,
+    specializations: () => 'cache:specializations:active',
+    specializationAll: () => 'cache:specializations:all',
+    hospitalProfile: (hospitalId: string) => `cache:hospital:profile:${hospitalId}`,
+    hospitalBySlug: (slug: string) => `cache:hospital:slug:${slug}`,
+    platformConfig: () => 'cache:platform:config',
+    platformConfigKey: (key: string) => `cache:platform:config:${key}`,
+} as const;
+
+/** Cache TTLs in seconds */
+export const CacheTTL = {
+    DOCTOR_AVAILABILITY: 120,  // P1: safe to increase — event-bus invalidation on schedule/appointment changes
+    SPECIALIZATIONS: 300,       // 5 minutes
+    HOSPITAL_PROFILE: 120,      // 2 minutes
+    PLATFORM_CONFIG: 600,       // 10 minutes
+} as const;
+
 export { Redis };

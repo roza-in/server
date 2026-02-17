@@ -1,18 +1,18 @@
 /**
  * Medicine Module Types
  * Type definitions for the medicine e-commerce system
+ * Aligned to migration 007 — centralized ROZX pharmacy model
  */
 
 import type {
     Medicine,
-    Pharmacy,
     MedicineOrder,
     MedicineOrderItem,
-    DeliveryPartner,
-    PharmacyInventory,
-    FulfillmentType,
-    MedicineOrderStatus
+    MedicineOrderStatus,
 } from '../../../types/database.types.js';
+
+// Re-export for convenience
+export type { Medicine, MedicineOrder, MedicineOrderItem, MedicineOrderStatus };
 
 // ============================================================================
 // Medicine Search & Listing
@@ -31,49 +31,12 @@ export interface MedicineSearchFilters {
     limit?: number;
 }
 
-export interface MedicineWithInventory extends Medicine {
-    pharmacy_price?: number;
-    pharmacy_discount?: number;
-    available_count?: number;
-    pharmacies_count?: number;
-}
-
 export interface MedicineSearchResponse {
-    medicines: MedicineWithInventory[];
+    medicines: Medicine[];
     total: number;
     page: number;
     limit: number;
     hasMore: boolean;
-}
-
-// ============================================================================
-// Pharmacy Types
-// ============================================================================
-
-export interface PharmacySearchFilters {
-    city?: string;
-    pincode?: string;
-    type?: string;
-    homeDelivery?: boolean;
-    is24x7?: boolean;
-    nearbyLat?: number;
-    nearbyLng?: number;
-    radiusKm?: number;
-    page?: number;
-    limit?: number;
-}
-
-export interface PharmacyWithDistance extends Pharmacy {
-    distance_km?: number;
-    has_all_medicines?: boolean;
-    available_medicines_count?: number;
-}
-
-export interface PharmacySearchResponse {
-    pharmacies: PharmacyWithDistance[];
-    total: number;
-    page: number;
-    limit: number;
 }
 
 // ============================================================================
@@ -82,9 +45,6 @@ export interface PharmacySearchResponse {
 
 export interface CreateMedicineOrderInput {
     prescriptionId?: string;
-    fulfillmentType: FulfillmentType;
-    pharmacyId?: string;
-    deliveryAddressId?: string;  // Use saved address
     deliveryAddress?: {
         address: string;
         city: string;
@@ -105,29 +65,32 @@ export interface CreateMedicineOrderInput {
 export interface CreateOrderItemInput {
     medicineId: string;
     quantity: number;
-    prescriptionItemIndex?: number;  // Links to prescription.medications[index]
+    prescriptionItemIndex?: number;
 }
 
+/**
+ * Order with joined relations from Supabase query.
+ * NOT an extends of MedicineOrder because the join returns nested objects.
+ */
 export interface MedicineOrderWithDetails extends MedicineOrder {
-    items: MedicineOrderItemWithDetails[];
-    pharmacy?: Pharmacy;
-    delivery_partner?: DeliveryPartner;
-    prescription?: any;  // Include prescription details if linked
+    medicine_order_items?: MedicineOrderItemWithDetails[];
+    patient?: { id: string; name: string; phone: string | null; email: string | null };
+    hospital?: { id: string; name: string } | null;
+    prescription?: any;
     tracking_events?: any[];
 }
 
 export interface MedicineOrderItemWithDetails extends MedicineOrderItem {
-    medicine: Medicine;
+    medicine?: { name: string; generic_name: string | null; image_url: string | null };
 }
 
 export interface OrderPricingBreakdown {
     subtotal: number;
     discountAmount: number;
     deliveryFee: number;
-    platformFee: number;
     gstAmount: number;
     totalAmount: number;
-    pharmacyAmount: number;
+    hospitalCommission: number;
     platformCommission: number;
 }
 
@@ -138,7 +101,7 @@ export interface OrderPricingBreakdown {
 export interface ConfirmOrderInput {
     orderId: string;
     estimatedReadyTime?: string;
-    pharmacyNotes?: string;
+    notes?: string;
 }
 
 export interface UpdateOrderStatusInput {
@@ -152,25 +115,6 @@ export interface UpdateOrderStatusInput {
 export interface CancelOrderInput {
     orderId: string;
     reason: string;
-}
-
-// ============================================================================
-// Inventory Types
-// ============================================================================
-
-export interface InventoryUpdateInput {
-    medicineId: string;
-    quantityAvailable: number;
-    sellingPrice: number;
-    discountPercent?: number;
-    batchNumber?: string;
-    expiryDate?: string;
-    isAvailable?: boolean;
-}
-
-export interface BulkInventoryUpdateInput {
-    pharmacyId: string;
-    items: InventoryUpdateInput[];
 }
 
 // ============================================================================
@@ -195,7 +139,6 @@ export interface PrescriptionToOrderMapping {
             isGeneric: boolean;
         }[];
     }[];
-    suggestedPharmacies: PharmacyWithDistance[];
 }
 
 // ============================================================================
@@ -210,19 +153,5 @@ export interface MedicineOrderStats {
     totalRevenue: number;
     platformCommission: number;
     averageOrderValue: number;
-    ordersByStatus: Record<MedicineOrderStatus, number>;
-    ordersByFulfillmentType: Record<FulfillmentType, number>;
-}
-
-export interface PharmacyDashboardStats {
-    todayOrders: number;
-    todayRevenue: number;
-    pendingOrders: number;
-    processingOrders: number;
-    readyForPickup: number;
-    outForDelivery: number;
-    averageProcessingTime: number;
-    rating: number;
-    totalRatings: number;
 }
 

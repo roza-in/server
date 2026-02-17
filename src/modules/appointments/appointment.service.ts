@@ -1,7 +1,7 @@
 import { logger } from '../../config/logger.js';
 import { formatToIST, formatAppointmentDate } from '../../common/utils/date.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
-import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';
+import { NotificationPurpose } from '../../integrations/notification/notification.types.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import { PLATFORM_FEES, APPOINTMENT_DURATIONS } from '../../config/constants.js';
 import { APPOINTMENT_TRANSITIONS } from './appointment.types.js';
@@ -12,6 +12,7 @@ import { familyMemberRepository } from '../../database/repositories/family-membe
 import { userRepository } from '../../database/repositories/user.repo.js';
 import { appointmentPolicy } from './appointment.policy.js';
 import { paymentService } from '../payments/payment.service.js';
+import { supabaseAdmin } from '../../database/supabase-admin.js';
 import type { AppointmentStatus, ConsultationType } from '../../types/database.types.js';
 import type { CreateOrderResponse } from '../payments/payment.types.js';
 import type {
@@ -79,7 +80,7 @@ class AppointmentService {
     }
 
     // Calculate end time
-    const duration = doctor.consultation_duration || APPOINTMENT_DURATIONS.DEFAULT;
+    const duration = doctor.slot_duration_minutes || APPOINTMENT_DURATIONS.DEFAULT;
     const calculatedEndTime = endTime || this.calculateEndTime(startTime, duration);
 
     // Check for duplicate booking (patient already has appointment with this doctor on this day)
@@ -113,33 +114,50 @@ class AppointmentService {
     const platformFee = 0;
     const totalAmount = consultationFee;
 
-    // Create appointment
-    const appointment = await appointmentRepository.create({
-      patient_id: patientId,
-      doctor_id: doctorId,
-      hospital_id: hospitalId || doctor.hospital_id,
-      family_member_id: familyMemberId || null,
-      slot_id: availability.slotId || null,
-      scheduled_date: appointmentDate,
-      scheduled_start: `${appointmentDate}T${startTime}:00+05:30`,
-      scheduled_end: `${appointmentDate}T${calculatedEndTime}:00+05:30`,
-      consultation_type: this.mapConsultationType(consultationType),
-      status: 'pending_payment',
-      patient_notes: notes || null,
-      consultation_fee: consultationFee,
-      platform_fee: platformFee,
-      total_amount: totalAmount,
-    } as any);
+    // C6 Fix: Use atomic RPC to prevent double-booking race conditions
+    const hospitalIdToBook = hospitalId || doctor.hospital_id;
+    const mappedType = this.mapConsultationType(consultationType);
 
-    if (!appointment) {
+    const { data: appointmentId, error: rpcError } = await supabaseAdmin.rpc('book_appointment_atomic', {
+      p_patient_id: patientId,
+      p_doctor_id: doctorId,
+      p_hospital_id: hospitalIdToBook,
+      p_family_member_id: familyMemberId || null,
+      p_slot_id: availability.slotId || null,
+      p_scheduled_date: appointmentDate,
+      p_scheduled_start: `${appointmentDate}T${startTime}:00+05:30`,
+      p_scheduled_end: `${appointmentDate}T${calculatedEndTime}:00+05:30`,
+      p_consultation_type: mappedType,
+      p_patient_notes: notes || null,
+      p_consultation_fee: consultationFee,
+      p_platform_fee: platformFee,
+      p_total_amount: totalAmount,
+    });
+
+    if (rpcError) {
+      const msg = rpcError.message || '';
+      if (msg.includes('SLOT_ALREADY_BOOKED')) {
+        throw new BadRequestError('Selected time slot is already booked');
+      }
+      if (msg.includes('SLOT_BEING_BOOKED')) {
+        throw new BadRequestError('Slot is currently being booked by another patient');
+      }
+      if (msg.includes('SLOT_AT_CAPACITY')) {
+        throw new BadRequestError('Slot is at full capacity');
+      }
+      this.log.error('Atomic booking RPC failed', rpcError);
+      throw new BadRequestError('Failed to book appointment');
+    }
+
+    if (!appointmentId) {
       throw new BadRequestError('Failed to book appointment');
     }
 
     // Get full appointment details
-    const fullAppointment = await this.getById(appointment.id);
+    const fullAppointment = await this.getById(appointmentId);
 
     this.log.info(`Appointment booked: ${fullAppointment.appointment_number}`, {
-      appointmentId: appointment.id,
+      appointmentId,
       patientId,
       doctorId: doctorId,
       date: appointmentDate,
@@ -150,23 +168,23 @@ class AppointmentService {
     if (totalAmount > 0) {
       try {
         paymentOrder = await paymentService.createOrder(patientId, {
-          appointment_id: appointment.id
+          appointment_id: appointmentId
         });
       } catch (error) {
-        this.log.error(`Failed to create payment order for appointment ${appointment.id}`, error);
+        this.log.error(`Failed to create payment order for appointment ${appointmentId}`, error);
         // We still return the appointment, client can retry payment order creation
       }
     } else {
       // Free appointment - auto confirm
-      await this.updateStatus(appointment.id, 'confirmed', 'system', 'admin');
+      await this.updateStatus(appointmentId, 'confirmed', 'system', 'admin');
 
       // Trigger Notification
-      const fullAppt = await this.getById(appointment.id);
+      const fullAppt = await this.getById(appointmentId);
       await this.sendConfirmationNotification(fullAppt);
     }
 
     return {
-      appointment: await this.getById(appointment.id),
+      appointment: await this.getById(appointmentId),
       requiresPayment: totalAmount > 0,
       amount: totalAmount,
       paymentOrder,
@@ -223,6 +241,7 @@ class AppointmentService {
       endTime: a.scheduled_end?.includes('T') ? a.scheduled_end.split('T')[1].substring(0, 5) : a.scheduled_end,
       consultationType: a.consultation_type,
       status: a.status,
+      patientId: a.patient_id || a.patient?.id || null,
       patientName: a.patient?.name || null,
       patientAvatar: a.patient?.avatar_url || null,
       doctorName: a.doctors?.users?.name || a.doctor?.users?.name || null,
@@ -232,10 +251,10 @@ class AppointmentService {
       hospitalAddress: a.hospitals?.address || a.hospital?.address || null,
       hospitalCity: a.hospitals?.city || a.hospital?.city || null,
       hospitalState: a.hospitals?.state || a.hospital?.state || null,
-      symptoms: a.symptoms,
+      patientNotes: a.patient_notes,
       paymentStatus: a.payment_status,
       totalAmount: a.total_amount,
-      isFollowup: a.is_followup || false,
+      isFollowUp: a.is_follow_up || false,
     }));
 
     const totalPages = Math.ceil(total / limit);
@@ -297,7 +316,7 @@ class AppointmentService {
         updateData.started_at = now;
         break;
       case 'completed':
-        updateData.completed_at = now;
+        updateData.ended_at = now;
         break;
       case 'cancelled':
         updateData.cancelled_at = now;
@@ -305,7 +324,7 @@ class AppointmentService {
         updateData.cancellation_reason = reason || null;
         break;
       case 'no_show':
-        updateData.no_show_at = now;
+        updateData.status_reason = reason || 'No show';
         break;
     }
 
@@ -347,7 +366,10 @@ class AppointmentService {
     }
 
     // Calculate new end time
-    const duration = this.calculateDuration(appointment.start_time, appointment.end_time);
+    const duration = this.calculateDuration(
+      appointment.startTime || formatToIST(appointment.scheduled_start),
+      appointment.endTime || formatToIST(appointment.scheduled_end)
+    );
     const newEndTime = this.calculateEndTime(input.newStartTime, duration);
 
     // Check new slot availability
@@ -367,7 +389,7 @@ class AppointmentService {
       scheduled_date: input.newDate,
       scheduled_start: `${input.newDate}T${input.newStartTime}:00+05:30`,
       scheduled_end: `${input.newDate}T${newEndTime}:00+05:30`,
-      reason: input.reason || null,
+      status_reason: input.reason || null,
       updated_at: new Date().toISOString(),
       // rescheduled_from is a UUID reference to appointments(id), skipping string date
     } as any);
@@ -378,7 +400,7 @@ class AppointmentService {
 
     this.log.info(`Appointment rescheduled: ${appointment.appointment_number}`, {
       appointmentId,
-      oldDate: appointment.appointment_date,
+      oldDate: appointment.scheduled_date,
       newDate: input.newDate,
     });
 
@@ -421,10 +443,11 @@ class AppointmentService {
       statusCounts[a.status] = (statusCounts[a.status] || 0) + 1;
     });
 
-    const todayCount = appointments.filter((a: any) => a.appointment_date === today).length;
-    const upcomingCount = appointments.filter((a: any) =>
-      a.appointment_date > today && ['confirmed', 'rescheduled'].includes(a.status)
-    ).length;
+    const todayCount = appointments.filter((a: any) => a.scheduled_date === today || a.appointmentDate === today).length;
+    const upcomingCount = appointments.filter((a: any) => {
+      const dateStr = a.scheduled_date || a.appointmentDate;
+      return dateStr > today && ['confirmed', 'rescheduled'].includes(a.status);
+    }).length;
 
     return {
       total: appointments.length,
@@ -516,7 +539,6 @@ class AppointmentService {
 
       const duration = schedule.slot_duration_minutes ||
         doctor?.slot_duration_minutes ||
-        doctor?.consultation_duration ||
         APPOINTMENT_DURATIONS.DEFAULT;
 
       // Handle breaks if any
@@ -619,7 +641,6 @@ class AppointmentService {
       scheduledEnd: data.scheduled_end,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
-      completedAt: data.completed_at,
 
       // Legacy formatted times (HH:mm) - Convering to IST
       start_time: formatToIST(data.scheduled_start),
@@ -699,6 +720,9 @@ class AppointmentService {
     switch (type) {
       case 'online':
         return doctor?.consultation_fee_online || doctor?.consultation_fee_in_person || 0;
+      case 'walk_in':
+        return doctor?.consultation_fee_walk_in || doctor?.consultation_fee_in_person || 0;
+      case 'in_person':
       default:
         return doctor?.consultation_fee_in_person || 0;
     }
@@ -739,19 +763,14 @@ class AppointmentService {
         await notificationService.send({
           purpose: NotificationPurpose.APPOINTMENT_CONFIRMED,
           phone: appointment.patientPhone,
-          channel: NotificationChannel.WhatsApp,
           variables: {
             patient_name: patientName,
             doctor_name: doctorName,
             date: dateStr,
-            time: appointment.startTime, // Ensure time format matches template expectation if needed
-            // Keeping "1", "2" etc for safety if older templates use them, but intent is named vars now for SMS/Email
-            "1": patientName,
-            "2": doctorName,
-            "3": dateStr,
-            "4": typeStr
+            type: typeStr,
           },
-          whatsappValues: [patientName, doctorName, dateStr, typeStr]
+          // rozx_appointment_confirmation: {{1}}=patient {{2}}=doctor {{3}}=date {{4}}=type
+          whatsappValues: [patientName, doctorName, dateStr, typeStr],
         });
       }
     } catch (error) {
@@ -763,9 +782,10 @@ class AppointmentService {
   /**
    * Map ConsultationType to database enum values
    */
-  private mapConsultationType(type: ConsultationType | string): "in_person" | "online" | "phone" | "home_visit" {
+  private mapConsultationType(type: ConsultationType | string): ConsultationType {
     if (type === 'video' || type === 'chat') return 'online';
-    return type as any;
+    if (type === 'in_person' || type === 'online' || type === 'walk_in') return type;
+    return 'in_person'; // Default fallback
   }
 }
 

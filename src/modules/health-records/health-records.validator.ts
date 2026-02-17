@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { uuidSchema, dateSchema, genderSchema, phoneSchema, emailSchema } from '../../common/validators.js';
+import { uuidSchema, dateSchema, genderSchema } from '../../common/validators.js';
 
 /**
- * Health Records Validators - Production-ready validation schemas
+ * Health Records Validators — aligned with database schema
  */
 
 // ============================================================================
@@ -19,11 +19,8 @@ export const createFamilyMemberSchema = z.object({
     gender: genderSchema.optional(),
     date_of_birth: dateSchema.optional(),
     blood_group: bloodGroupSchema.optional(),
-    phone: phoneSchema.optional(),
-    email: emailSchema.optional(),
+    medical_conditions: z.array(z.string().max(100)).max(20).optional(),
     allergies: z.array(z.string().max(100)).max(20).optional(),
-    chronic_conditions: z.array(z.string().max(100)).max(20).optional(),
-    emergency_contact: z.boolean().default(false),
   }),
 });
 
@@ -34,15 +31,12 @@ export const updateFamilyMemberSchema = z.object({
   body: z.object({
     name: z.string().min(2).max(255).trim().optional(),
     relationship: relationshipSchema.optional(),
-    gender: genderSchema.optional(),
+    gender: genderSchema.optional().nullable(),
     date_of_birth: dateSchema.optional().nullable(),
     blood_group: bloodGroupSchema.optional().nullable(),
-    phone: phoneSchema.optional().nullable(),
-    email: emailSchema.optional().nullable(),
-    avatar_url: z.string().url().optional().nullable(),
+    medical_conditions: z.array(z.string().max(100)).max(20).optional().nullable(),
     allergies: z.array(z.string().max(100)).max(20).optional().nullable(),
-    chronic_conditions: z.array(z.string().max(100)).max(20).optional().nullable(),
-    emergency_contact: z.boolean().optional(),
+    is_active: z.boolean().optional(),
   }),
 });
 
@@ -77,15 +71,19 @@ export const uploadDocumentSchema = z.object({
   body: z.object({
     family_member_id: uuidSchema.optional(),
     appointment_id: uuidSchema.optional(),
+    consultation_id: uuidSchema.optional(),
     document_type: documentTypeSchema,
     title: z.string().min(2).max(255).trim(),
     description: z.string().max(1000).optional(),
     file_url: z.string().url(),
-    file_name: z.string().min(1).max(255),
-    file_size: z.number().positive().max(50 * 1024 * 1024), // 50MB max
-    mime_type: z.string().max(100),
-    tags: z.array(z.string().max(50)).max(10).optional(),
-    is_shared_with_doctors: z.boolean().default(false),
+    file_name: z.string().min(1).max(255).optional(),
+    file_size: z.number().positive().max(50 * 1024 * 1024).optional(),
+    mime_type: z.string().max(100).optional(),
+    document_date: dateSchema.optional(),
+    hospital_name: z.string().max(255).optional(),
+    doctor_name: z.string().max(255).optional(),
+    is_shared: z.boolean().default(false),
+    shared_doctors: z.array(uuidSchema).optional(),
   }),
 });
 
@@ -97,8 +95,9 @@ export const updateDocumentSchema = z.object({
     document_type: documentTypeSchema.optional(),
     title: z.string().min(2).max(255).trim().optional(),
     description: z.string().max(1000).optional().nullable(),
-    tags: z.array(z.string().max(50)).max(10).optional().nullable(),
-    is_shared_with_doctors: z.boolean().optional(),
+    document_date: dateSchema.optional().nullable(),
+    is_shared: z.boolean().optional(),
+    shared_doctors: z.array(uuidSchema).optional().nullable(),
   }),
 });
 
@@ -119,55 +118,43 @@ export const listDocumentsSchema = z.object({
     family_member_id: uuidSchema.optional(),
     appointment_id: uuidSchema.optional(),
     document_type: documentTypeSchema.optional(),
-    tags: z.string().transform(val => val.split(',').map(t => t.trim()).filter(Boolean)).optional(),
     date_from: dateSchema.optional(),
     date_to: dateSchema.optional(),
     search: z.string().max(255).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).optional().default(1),
-    limit: z.string().regex(/^\d+$/).transform(Number).optional().default(20),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
   }),
 });
 
 // ============================================================================
-// Vital Records Validators
+// Vital Records Validators (patient_vitals table)
 // ============================================================================
-
-const temperatureUnitSchema = z.enum(['celsius', 'fahrenheit']);
-const weightUnitSchema = z.enum(['kg', 'lb']);
-const heightUnitSchema = z.enum(['cm', 'ft']);
-const bloodSugarTypeSchema = z.enum(['fasting', 'random', 'post_meal']);
-const vitalSourceSchema = z.enum(['manual', 'device', 'clinic']);
 
 export const createVitalRecordSchema = z.object({
   body: z.object({
     family_member_id: uuidSchema.optional(),
+    consultation_id: uuidSchema.optional(),
     recorded_at: z.string().datetime().optional(),
     // Blood pressure (mmHg)
     blood_pressure_systolic: z.number().min(50).max(300).optional(),
     blood_pressure_diastolic: z.number().min(30).max(200).optional(),
-    // Heart rate (bpm)
-    heart_rate: z.number().min(30).max(300).optional(),
-    // Temperature
+    // Pulse rate (bpm)
+    pulse_rate: z.number().min(30).max(300).optional(),
+    // Temperature (Celsius)
     temperature: z.number().min(25).max(45).optional(),
-    temperature_unit: temperatureUnitSchema.default('celsius'),
-    // Respiratory rate (breaths/min)
-    respiratory_rate: z.number().min(5).max(60).optional(),
-    // Oxygen saturation (%)
-    oxygen_saturation: z.number().min(50).max(100).optional(),
+    // SpO2 (%)
+    spo2: z.number().min(50).max(100).optional(),
     // Body measurements
     weight: z.number().min(1).max(500).optional(),
-    weight_unit: weightUnitSchema.default('kg'),
     height: z.number().min(30).max(300).optional(),
-    height_unit: heightUnitSchema.default('cm'),
     // Blood sugar (mg/dL)
-    blood_sugar: z.number().min(20).max(600).optional(),
-    blood_sugar_type: bloodSugarTypeSchema.optional(),
+    blood_sugar_fasting: z.number().min(20).max(600).optional(),
+    blood_sugar_pp: z.number().min(20).max(600).optional(),
     // Additional
     notes: z.string().max(1000).optional(),
-    source: vitalSourceSchema.default('manual'),
+    recorded_by: uuidSchema.optional(),
   }).refine(
     (data) => {
-      // If blood pressure provided, both values needed
       if (data.blood_pressure_systolic || data.blood_pressure_diastolic) {
         return data.blood_pressure_systolic && data.blood_pressure_diastolic;
       }
@@ -182,8 +169,8 @@ export const listVitalsSchema = z.object({
     family_member_id: uuidSchema.optional(),
     date_from: dateSchema.optional(),
     date_to: dateSchema.optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).optional().default(1),
-    limit: z.string().regex(/^\d+$/).transform(Number).optional().default(20),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
   }),
 });
 
@@ -200,35 +187,23 @@ export const deleteVitalSchema = z.object({
 });
 
 // ============================================================================
-// Medication Validators
+// Medication Validators (patient_medications table)
 // ============================================================================
-
-const frequencySchema = z.enum([
-  'once_daily',
-  'twice_daily',
-  'thrice_daily',
-  'four_times_daily',
-  'every_4_hours',
-  'every_6_hours',
-  'every_8_hours',
-  'every_12_hours',
-  'weekly',
-  'as_needed',
-]);
 
 export const createMedicationSchema = z.object({
   body: z.object({
     family_member_id: uuidSchema.optional(),
+    prescription_id: uuidSchema.optional(),
     medication_name: z.string().min(1).max(255).trim(),
-    dosage: z.string().min(1).max(100),
-    frequency: frequencySchema,
-    times_per_day: z.number().int().min(1).max(24).default(1),
-    reminder_times: z.array(z.string().regex(/^\d{2}:\d{2}$/)).min(1).max(24),
+    generic_name: z.string().max(255).optional(),
+    dosage: z.string().min(1).max(100).optional(),
+    frequency: z.string().max(100).optional(),
+    route: z.string().max(100).optional(),
     start_date: dateSchema,
     end_date: dateSchema.optional(),
-    instructions: z.string().max(500).optional(),
+    reason: z.string().max(500).optional(),
+    notes: z.string().max(500).optional(),
     prescribed_by: z.string().max(255).optional(),
-    is_active: z.boolean().default(true),
   }),
 });
 
@@ -238,13 +213,13 @@ export const updateMedicationSchema = z.object({
   }),
   body: z.object({
     medication_name: z.string().min(1).max(255).trim().optional(),
+    generic_name: z.string().max(255).optional().nullable(),
     dosage: z.string().min(1).max(100).optional(),
-    frequency: frequencySchema.optional(),
-    times_per_day: z.number().int().min(1).max(24).optional(),
-    reminder_times: z.array(z.string().regex(/^\d{2}:\d{2}$/)).min(1).max(24).optional(),
-    start_date: dateSchema.optional(),
+    frequency: z.string().max(100).optional(),
+    route: z.string().max(100).optional().nullable(),
     end_date: dateSchema.optional().nullable(),
-    instructions: z.string().max(500).optional().nullable(),
+    reason: z.string().max(500).optional(),
+    notes: z.string().max(500).optional().nullable(),
     is_active: z.boolean().optional(),
   }),
 });
@@ -265,44 +240,66 @@ export const listMedicationsSchema = z.object({
   query: z.object({
     family_member_id: uuidSchema.optional(),
     is_active: z.enum(['true', 'false']).transform(val => val === 'true').optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).optional().default(1),
-    limit: z.string().regex(/^\d+$/).transform(Number).optional().default(20),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
   }),
 });
 
 // ============================================================================
-// Reminder Action Validators
+// Medication Reminder Validators (medication_reminders table)
 // ============================================================================
 
-export const recordReminderActionSchema = z.object({
+export const createMedicationReminderSchema = z.object({
+  body: z.object({
+    family_member_id: uuidSchema.optional(),
+    prescription_id: uuidSchema.optional(),
+    medicine_id: uuidSchema.optional(),
+    medicine_name: z.string().min(1).max(255).trim(),
+    dosage: z.string().max(100).optional(),
+    instructions: z.string().max(500).optional(),
+    frequency: z.string().min(1).max(100),
+    reminder_times: z.array(z.string().regex(/^\d{2}:\d{2}$/)).min(1).max(24),
+    meal_timing: z.string().max(50).optional(),
+    start_date: dateSchema,
+    end_date: dateSchema.optional(),
+    push_enabled: z.boolean().default(true),
+    sms_enabled: z.boolean().default(false),
+  }),
+});
+
+// ============================================================================
+// Medication Action Validators (medication_logs table)
+// ============================================================================
+
+export const recordMedicationActionSchema = z.object({
   params: z.object({
     medicationId: uuidSchema,
   }),
   body: z.object({
-    action: z.enum(['taken', 'skipped', 'snoozed']),
+    action: z.enum(['taken', 'skipped', 'missed']),
     scheduled_time: z.string().regex(/^\d{2}:\d{2}$/),
     taken_at: z.string().datetime().optional(),
+    skipped_reason: z.string().max(500).optional(),
     notes: z.string().max(500).optional(),
   }),
 });
 
 // ============================================================================
-// Allergy Validators
+// Allergy Validators (patient_allergies table)
 // ============================================================================
 
 const allergySeveritySchema = z.enum(['mild', 'moderate', 'severe', 'life_threatening']);
-const allergyTypeSchema = z.enum(['food', 'drug', 'environmental', 'insect', 'latex', 'other']);
+const allergenTypeSchema = z.enum(['food', 'drug', 'environmental', 'insect', 'latex', 'other']);
 
 export const createAllergySchema = z.object({
   body: z.object({
     family_member_id: uuidSchema.optional(),
-    allergy_type: allergyTypeSchema,
+    allergen_type: allergenTypeSchema,
     allergen: z.string().min(1).max(255).trim(),
     severity: allergySeveritySchema,
-    reactions: z.array(z.string().max(100)).max(10).optional(),
-    first_observed: dateSchema.optional(),
+    reaction: z.string().max(500).optional(),
+    onset_date: dateSchema.optional(),
     diagnosed_by: z.string().max(255).optional(),
-    notes: z.string().max(1000).optional(),
   }),
 });
 
@@ -311,13 +308,13 @@ export const updateAllergySchema = z.object({
     allergyId: uuidSchema,
   }),
   body: z.object({
-    allergy_type: allergyTypeSchema.optional(),
+    allergen_type: allergenTypeSchema.optional(),
     allergen: z.string().min(1).max(255).trim().optional(),
     severity: allergySeveritySchema.optional(),
-    reactions: z.array(z.string().max(100)).max(10).optional().nullable(),
-    first_observed: dateSchema.optional().nullable(),
+    reaction: z.string().max(500).optional().nullable(),
+    onset_date: dateSchema.optional().nullable(),
     diagnosed_by: z.string().max(255).optional().nullable(),
-    notes: z.string().max(1000).optional().nullable(),
+    is_active: z.boolean().optional(),
   }),
 });
 
@@ -336,9 +333,9 @@ export const deleteAllergySchema = z.object({
 export const listAllergiesSchema = z.object({
   query: z.object({
     family_member_id: uuidSchema.optional(),
-    allergy_type: allergyTypeSchema.optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).optional().default(1),
-    limit: z.string().regex(/^\d+$/).transform(Number).optional().default(50),
+    allergen_type: allergenTypeSchema.optional(),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('50').transform(Number),
   }),
 });
 
@@ -356,18 +353,5 @@ export const getHealthSummarySchema = z.object({
 // Type Exports
 // ============================================================================
 
-export type CreateFamilyMemberInput = z.infer<typeof createFamilyMemberSchema>['body'];
-export type UpdateFamilyMemberInput = z.infer<typeof updateFamilyMemberSchema>['body'];
-export type UploadDocumentInput = z.infer<typeof uploadDocumentSchema>['body'];
-export type UpdateDocumentInput = z.infer<typeof updateDocumentSchema>['body'];
-export type ListDocumentsInput = z.infer<typeof listDocumentsSchema>['query'];
-export type CreateVitalRecordInput = z.infer<typeof createVitalRecordSchema>['body'];
-export type ListVitalsInput = z.infer<typeof listVitalsSchema>['query'];
-export type CreateMedicationInput = z.infer<typeof createMedicationSchema>['body'];
-export type UpdateMedicationInput = z.infer<typeof updateMedicationSchema>['body'];
-export type ListMedicationsInput = z.infer<typeof listMedicationsSchema>['query'];
-export type RecordReminderActionInput = z.infer<typeof recordReminderActionSchema>;
-export type CreateAllergyInput = z.infer<typeof createAllergySchema>['body'];
-export type UpdateAllergyInput = z.infer<typeof updateAllergySchema>['body'];
-export type ListAllergiesInput = z.infer<typeof listAllergiesSchema>['query'];
+// Type exports omitted — canonical types live in health-records.types.ts
 

@@ -1,215 +1,182 @@
-import { z } from 'zod';
-// import { supabaseAdmin } from '../../database/supabase-admin.js';
+/**
+ * Video Service (Integration Layer)
+ *
+ * Orchestrates video providers (Agora, ZegoCloud) with environment-driven
+ * active provider selection and credential-based fallback.
+ *
+ * Features:
+ *  - Dynamic provider resolution (env → first configured)
+ *  - Token generation + channel name helpers
+ *  - Numeric UID generation for providers that require it
+ *  - Client config for frontend SDK initialization
+ */
+
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import { logAudit } from '../../config/audit.js';
-import { ERROR_CODES } from '../../common/errors/error-codes.js';
-import {
-    VideoProvider,
-    VideoTokenPayload,
-    VideoProviderName,
-    VideoProviderStatus,
-    VideoProviderNameSchema
+import type {
+  VideoProvider,
+  VideoTokenPayload,
+  VideoProviderName,
+  VideoProviderStatus,
+  VideoClientConfig,
 } from './video.types.js';
 import { AgoraProvider } from './agora.provider.js';
 import { ZegoCloudProvider } from './zegocloud.provider.js';
 
 const log = logger.child('VideoService');
 
-/**
- * Validation Schemas
- */
-const TokenParamsSchema = z.object({
-    roomId: z.string().min(3).max(100),
-    userId: z.string().uuid(),
-    role: z.enum(['host', 'audience']).default('host'),
-    expirationInSeconds: z.number().int().min(300).max(86400).default(3600),
-});
-
-const SwitchProviderSchema = z.object({
-    newProvider: VideoProviderNameSchema,
-    adminUserId: z.string().uuid(),
-});
-
-/**
- * Video Service
- * 
- * Orchestrates video providers (Agora, ZegoCloud) with admin-switchable
- * active provider support via database (system_settings) and environment variables.
- */
 class VideoService {
-    private providers: Record<VideoProviderName, VideoProvider>;
-    private cachedActiveProvider: VideoProviderName | null = null;
-    private cacheExpiry = 0;
-    private readonly CACHE_TTL_MS = 5 * 60 * 1000; // Increased to 5 minutes for production
+  private providers: Record<VideoProviderName, VideoProvider>;
+  private cachedActiveProvider: VideoProviderName | null = null;
+  private cacheExpiry = 0;
+  private readonly CACHE_TTL_MS = 5 * 60_000; // 5 minutes
 
-    constructor() {
-        // Initialize providers
-        this.providers = {
-            agora: new AgoraProvider(),
-            zegocloud: new ZegoCloudProvider()
-        };
+  constructor() {
+    this.providers = {
+      agora: new AgoraProvider(),
+      zegocloud: new ZegoCloudProvider(),
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Provider Resolution
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get the currently active video provider name.
+   * Priority: cache → ENV VIDEO_PROVIDER → first configured → 'agora' (default)
+   */
+  async getActiveProviderName(): Promise<VideoProviderName> {
+    if (this.cachedActiveProvider && Date.now() < this.cacheExpiry) {
+      return this.cachedActiveProvider;
     }
 
-    /**
-     * Get the currently active video provider name
-     * Checks database first, falls back to env, defaults to configured provider
-     */
-    async getActiveProviderName(): Promise<VideoProviderName> {
-        // 1. Check Environment Variable
-        const envProvider = (env.VIDEO_PROVIDER || '').toLowerCase() as VideoProviderName;
-        if (this.providers[envProvider]?.isConfigured()) {
-            return envProvider;
-        }
-
-        // 2. Fallback logic based on credentials
-        if (this.providers['agora'].isConfigured()) {
-            return 'agora';
-        }
-
-        if (this.providers['zegocloud'].isConfigured()) {
-            return 'zegocloud';
-        }
-
-        // Critical: No provider configured
-        log.error('No video provider is properly configured in production environment');
-        return 'agora'; // Default fallback
+    // 1. Environment variable
+    const envProvider = (env.VIDEO_PROVIDER || '').toLowerCase() as VideoProviderName;
+    if (this.providers[envProvider]?.isConfigured()) {
+      this.setCache(envProvider);
+      return envProvider;
     }
 
-    private setCache(provider: VideoProviderName) {
-        this.cachedActiveProvider = provider;
-        this.cacheExpiry = Date.now() + this.CACHE_TTL_MS;
+    // 2. First configured provider
+    if (this.providers.agora.isConfigured()) {
+      this.setCache('agora');
+      return 'agora';
+    }
+    if (this.providers.zegocloud.isConfigured()) {
+      this.setCache('zegocloud');
+      return 'zegocloud';
     }
 
-    /**
-     * Get the active video provider instance
-     */
-    async getActiveProvider(): Promise<VideoProvider> {
-        const name = await this.getActiveProviderName();
-        return this.providers[name];
+    // 3. Fallback — no provider configured
+    log.error('No video provider is properly configured');
+    return 'agora';
+  }
+
+  /**
+   * Get the active video provider instance.
+   */
+  async getActiveProvider(): Promise<VideoProvider> {
+    const name = await this.getActiveProviderName();
+    return this.providers[name];
+  }
+
+  private setCache(provider: VideoProviderName): void {
+    this.cachedActiveProvider = provider;
+    this.cacheExpiry = Date.now() + this.CACHE_TTL_MS;
+  }
+
+  clearCache(): void {
+    this.cachedActiveProvider = null;
+    this.cacheExpiry = 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Provider Status
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get status of all providers (for admin dashboard).
+   */
+  async getProviderStatus(): Promise<VideoProviderStatus[]> {
+    const activeProvider = await this.getActiveProviderName();
+
+    return (Object.keys(this.providers) as VideoProviderName[]).map((name) => ({
+      name,
+      enabled: true,
+      isActive: activeProvider === name,
+      configured: this.providers[name].isConfigured(),
+    }));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Token Generation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Generate a video token using the active provider.
+   */
+  async generateToken(
+    params: VideoTokenPayload,
+  ): Promise<{ token: string; provider: VideoProviderName }> {
+    const providerName = await this.getActiveProviderName();
+    const provider = this.providers[providerName];
+
+    if (!provider.isConfigured()) {
+      log.error('Active video provider is not configured', { provider: providerName });
+      throw new Error(`Video provider ${providerName} is not configured`);
     }
 
-    /**
-     * Switch the active video provider (admin action)
-     * 
-     * @param newProvider The provider to switch to
-     * @param adminUserId The ID of the admin performing the switch
-     */
-    async switchProvider(newProvider: VideoProviderName, adminUserId: string): Promise<{ success: boolean; message: string }> {
-        return { success: false, message: 'Provider switching via API is disabled. Use environment variables.' };
+    log.debug('Generating video token', { provider: providerName, roomId: params.roomId, userId: params.userId });
+
+    try {
+      const token = await provider.generateToken(params);
+      return { token, provider: providerName };
+    } catch (error) {
+      log.error('Token generation failed', {
+        provider: providerName,
+        error: error instanceof Error ? error.message : error,
+        roomId: params.roomId,
+      });
+      throw error;
     }
+  }
 
-    /**
-     * Get status of all providers
-     */
-    async getProviderStatus(): Promise<VideoProviderStatus[]> {
-        const activeProvider = await this.getActiveProviderName();
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Helpers
+  // ═══════════════════════════════════════════════════════════════════════════
 
-        return (Object.keys(this.providers) as VideoProviderName[]).map(name => ({
-            name,
-            enabled: true,
-            isActive: activeProvider === name,
-            configured: this.providers[name].isConfigured(),
-        }));
+  /**
+   * Generate a deterministic channel name for a consultation.
+   */
+  generateChannelName(consultationId: string): string {
+    return `rozx_call_${consultationId.replace(/-/g, '')}`;
+  }
+
+  /**
+   * Generate a numeric UID from a UUID.
+   * Required by providers like Agora that use numeric UIDs.
+   * Returns a positive 32-bit integer.
+   */
+  generateUserUid(userId: string): number {
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      const char = userId.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
     }
+    return (Math.abs(hash) % 2147483647) + 1;
+  }
 
-    /**
-     * Generate token using the active provider
-     * 
-     * @param params Token generation parameters
-     */
-    async generateToken(params: { roomId: string; userId: string; role?: 'host' | 'audience'; expirationInSeconds?: number }): Promise<{ token: string; provider: VideoProviderName }> {
-        // Validate parameters
-        const validation = TokenParamsSchema.safeParse(params);
-        if (!validation.success) {
-            log.warn('Token generation requested with invalid parameters', { errors: validation.error.format(), params });
-            throw new Error('Invalid token parameters');
-        }
-
-        const validParams = validation.data;
-        const providerName = await this.getActiveProviderName();
-        const provider = this.providers[providerName];
-
-        if (!provider.isConfigured()) {
-            log.error('Active video provider is not configured', { provider: providerName });
-            throw new Error(`Video provider ${providerName} is not configured`);
-        }
-
-        log.debug('Generating video token', {
-            provider: providerName,
-            roomId: validParams.roomId,
-            userId: validParams.userId
-        });
-
-        try {
-            const token = await provider.generateToken({
-                roomId: validParams.roomId,
-                userId: validParams.userId,
-                role: validParams.role,
-                expirationInSeconds: validParams.expirationInSeconds
-            });
-
-            return { token, provider: providerName };
-        } catch (error) {
-            log.error('Token generation failed at provider level', {
-                provider: providerName,
-                error: error instanceof Error ? error.message : error,
-                params: validParams
-            });
-            throw error;
-        }
-    }
-
-    /**
-     * Generate channel name for a consultation
-     * 
-     * @param consultationId The internal consultation UUID
-     */
-    generateChannelName(consultationId: string): string {
-        // Ensure consistency across platforms
-        return `rozx_call_${consultationId.replace(/-/g, '')}`;
-    }
-
-    /**
-     * Generate unique numeric UID for a user in a channel
-     * Required by some providers like Agora (for numeric UID clients)
-     * 
-     * @param userId The User UUID
-     * @returns A 32-bit unsigned integer
-     */
-    generateUserUid(userId: string): number {
-        // Implementation uses a more robust hashing for 32-bit range
-        let hash = 0;
-        for (let i = 0; i < userId.length; i++) {
-            const char = userId.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32bit integer
-        }
-        // Ensure strictly positive and within 32-bit unsigned range (max 4,294,967,295)
-        // Using 2,147,483,647 as max for signed-safe operations in some JDks
-        return (Math.abs(hash) % 2147483647) + 1;
-    }
-
-    /**
-     * Get client configuration for SDK initialization
-     */
-    async getClientConfig(): Promise<{ provider: VideoProviderName; appId: string | number }> {
-        const providerName = await this.getActiveProviderName();
-        const instance = this.providers[providerName];
-
-        // Safely extract appId from provider instance
-        const appId = (instance as any).appId || (instance as any).getClientConfig?.().appId || '';
-
-        return { provider: providerName, appId };
-    }
-
-    /**
-     * Clear the provider cache
-     */
-    clearCache(): void {
-        this.cachedActiveProvider = null;
-        this.cacheExpiry = 0;
-    }
+  /**
+   * Get client configuration for frontend SDK initialization.
+   */
+  async getClientConfig(): Promise<VideoClientConfig> {
+    const providerName = await this.getActiveProviderName();
+    const provider = this.providers[providerName];
+    const { appId } = provider.getClientConfig();
+    return { provider: providerName, appId };
+  }
 }
 
 export const videoService = new VideoService();

@@ -1,45 +1,28 @@
 /**
- * Jest Test Setup
- * 
- * This file runs before each test file and sets up:
- * - Environment variables for testing
- * - Global mocks
- * - Extended matchers
+ * Jest setup file — runs before all test suites.
+ * Sets required environment variables so env.ts Zod validation passes
+ * without needing a real .env file.
  */
 
-import { jest, afterAll } from '@jest/globals';
-
-// Set test environment variables
+// Set required env vars BEFORE anything imports env.ts
 process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'test-jwt-secret-for-testing-only';
-process.env.JWT_EXPIRES_IN = '1h';
-process.env.OTP_EXPIRY_MINUTES = '10';
-process.env.SUPABASE_URL = 'https://test.supabase.co';
-process.env.SUPABASE_ANON_KEY = 'test-anon-key-must-be-at-least-20-chars';
-process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key-must-be-at-least-20-chars';
-process.env.COOKIE_SECRET = 'test-cookie-secret-must-be-at-least-32-chars-long';
-process.env.RAZORPAY_KEY_ID = 'rzp_test_xxx';
-process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+process.env.PORT = '5555';
+process.env.SUPABASE_URL = 'https://fake-project.supabase.co';
+process.env.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake-anon-key-that-is-long-enough';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake-service-role-key-long-enough';
+process.env.JWT_SECRET = 'test-jwt-secret-that-is-at-least-32-characters-long-with-unique-chars!@#$';
+process.env.JWT_ACCESS_TOKEN_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_TOKEN_EXPIRES_IN = '7d';
+process.env.JWT_ISSUER = 'rozx-test';
+process.env.COOKIE_SECRET = 'test-cookie-secret-that-is-at-least-32-characters-long-unique!';
 process.env.CORS_ORIGIN = 'http://localhost:3000';
+process.env.CLIENT_URL = 'http://localhost:3000';
+process.env.RAZORPAY_WEBHOOK_SECRET = 'test-razorpay-webhook-secret';
+process.env.CASHFREE_WEBHOOK_SECRET = 'test-cashfree-webhook-secret';
+process.env.WEBHOOK_API_KEY = 'test-webhook-api-key-that-is-at-least-32-characters-long!!!!';
 
-// Silence console in tests unless explicitly debugging
-if (process.env.DEBUG_TESTS !== 'true') {
-    const originalConsole = global.console;
-    global.console = {
-        ...originalConsole,
-        log: jest.fn() as unknown as typeof console.log,
-        debug: jest.fn() as unknown as typeof console.debug,
-        info: jest.fn() as unknown as typeof console.info,
-        warn: jest.fn() as unknown as typeof console.warn,
-        // Keep error for debugging test failures
-        error: originalConsole.error,
-    };
-}
-
-// Global test timeout
-jest.setTimeout(10000);
-
-// Clean up after all tests
-afterAll(async () => {
-    // Add any global cleanup here
-});
+// Silence logs during tests
+import { jest } from '@jest/globals';
+jest.spyOn(console, 'log').mockImplementation(() => {});
+jest.spyOn(console, 'info').mockImplementation(() => {});
+jest.spyOn(console, 'warn').mockImplementation(() => {});

@@ -5,44 +5,22 @@ import { Request } from 'express';
 const log = logger.child('AuditService');
 
 /**
- * Audit Action Types - Categorize sensitive operations
+ * Audit Action Types - Must match audit_action enum in migration 001
  */
 export type AuditAction =
-    // Authentication
-    | 'auth.login'
-    | 'auth.logout'
-    | 'auth.password_change'
-    | 'auth.password_reset'
-    | 'auth.otp_verify'
-    | 'auth.session_revoke'
-    // User Management
-    | 'user.create'
-    | 'user.update'
-    | 'user.delete'
-    | 'user.role_change'
-    | 'user.block'
-    | 'user.unblock'
-    // Payments
-    | 'payment.create'
-    | 'payment.verify'
-    | 'payment.refund'
-    | 'payment.settlement'
-    // Medical Records
-    | 'record.view'
-    | 'record.create'
-    | 'record.update'
-    | 'record.delete'
-    | 'record.share'
-    // Appointments
-    | 'appointment.create'
-    | 'appointment.cancel'
-    | 'appointment.reschedule'
-    | 'appointment.complete'
-    // Admin Operations
-    | 'admin.config_change'
-    | 'admin.data_export'
-    | 'admin.data_delete'
-    | 'admin.user_impersonate';
+    | 'create'
+    | 'read'
+    | 'update'
+    | 'delete'
+    | 'login'
+    | 'logout'
+    | 'payment'
+    | 'refund'
+    | 'status_change'
+    | 'verification'
+    | 'payout'
+    | 'settlement'
+    | 'dispute';
 
 /**
  * Entity Types for audit context
@@ -67,17 +45,16 @@ export interface AuditLogInput {
     userId?: string;
     userRole?: string;
     action: AuditAction | string;
-    actionDescription?: string;
+    description?: string;
     entityType?: AuditEntityType | string;
     entityId?: string;
-    oldData?: Record<string, unknown>;
-    newData?: Record<string, unknown>;
-    changes?: Record<string, { from: unknown; to: unknown }>;
+    changes?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
-    // Request context (auto-populated if Request object passed)
+    accessedPhi?: boolean;
+    phiFields?: string[];
     ipAddress?: string;
     userAgent?: string;
-    requestId?: string;
+    correlationId?: string;
 }
 
 /**
@@ -130,28 +107,27 @@ export const auditService = {
             // Extract request context if available
             const ipAddress = input.ipAddress || req?.ip || req?.socket?.remoteAddress;
             const userAgent = input.userAgent || req?.headers['user-agent'];
-            const requestId = input.requestId || req?.requestId;
+            const correlationId = input.correlationId || req?.requestId;
 
             // Redact sensitive data
-            const safeOldData = redactSensitiveData(input.oldData);
-            const safeNewData = redactSensitiveData(input.newData);
+            const safeChanges = redactSensitiveData(input.changes);
             const safeMetadata = redactSensitiveData(input.metadata);
 
-            // Insert audit log
+            // Insert audit log — columns match migration 008
             const { error } = await supabaseAdmin.from('audit_logs').insert({
                 user_id: input.userId || null,
                 user_role: input.userRole || null,
                 action: input.action,
-                action_description: input.actionDescription || null,
+                description: input.description || null,
                 entity_type: input.entityType || null,
                 entity_id: input.entityId || null,
-                old_data: safeOldData || null,
-                new_data: safeNewData || null,
-                changes: input.changes || null,
+                changes: safeChanges || null,
+                metadata: safeMetadata || null,
                 ip_address: ipAddress || null,
                 user_agent: userAgent || null,
-                request_id: requestId || null,
-                metadata: safeMetadata || null,
+                correlation_id: correlationId || null,
+                accessed_phi: input.accessedPhi || false,
+                phi_fields: input.phiFields || null,
             });
 
             if (error) {
@@ -171,7 +147,7 @@ export const auditService = {
     async logFromRequest(
         req: Request,
         action: AuditAction | string,
-        options: Omit<AuditLogInput, 'action' | 'userId' | 'userRole' | 'ipAddress' | 'userAgent' | 'requestId'> = {}
+        options: Omit<AuditLogInput, 'action' | 'userId' | 'userRole' | 'ipAddress' | 'userAgent' | 'correlationId'> = {}
     ): Promise<void> {
         // Get user from request if authenticated
         const user = (req as any).user;
@@ -183,7 +159,7 @@ export const auditService = {
             userRole: user?.role,
             ipAddress: req.ip,
             userAgent: req.headers['user-agent'],
-            requestId: req.requestId,
+            correlationId: req.requestId,
         });
     },
 

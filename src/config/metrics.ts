@@ -1,12 +1,20 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from './logger.js';
 import { isProduction } from './env.js';
+import { getRedisClient } from './redis.js';
 
 const log = logger.child('Metrics');
 
+// ============================================================================
+// SC2: Instance-aware metrics with Redis-backed global counters
+// ============================================================================
+
+const INSTANCE_ID = process.env.HOSTNAME || `pid-${process.pid}`;
+
 /**
- * In-memory metrics storage
- * In production, you'd typically export these to Prometheus, CloudWatch, etc.
+ * In-memory metrics storage — per-instance route-level stats.
+ * Global counters (totalRequests, totalErrors) are also persisted to Redis
+ * so they survive restarts and can be aggregated across instances.
  */
 interface RouteMetrics {
     count: number;
@@ -18,7 +26,7 @@ interface RouteMetrics {
     p99Ms: number;
     errors: number;
     lastUpdated: number;
-    responseTimes: number[]; // Keep last N for percentile calculation
+    responseTimes: number[];
 }
 
 interface GlobalMetrics {
@@ -79,10 +87,10 @@ const getRouteMetrics = (routeKey: string): RouteMetrics => {
 };
 
 /**
- * Record request metrics
+ * Record request metrics (in-memory + async Redis increment)
  */
 const recordRequest = (routeKey: string, durationMs: number, statusCode: number): void => {
-    // Global metrics
+    // Global metrics (in-memory)
     metrics.totalRequests++;
     metrics.lastMinuteRequests.push(Date.now());
     metrics.statusCodes[statusCode] = (metrics.statusCodes[statusCode] || 0) + 1;
@@ -113,6 +121,9 @@ const recordRequest = (routeKey: string, durationMs: number, statusCode: number)
     routeMetrics.p50Ms = percentile(routeMetrics.responseTimes, 50);
     routeMetrics.p95Ms = percentile(routeMetrics.responseTimes, 95);
     routeMetrics.p99Ms = percentile(routeMetrics.responseTimes, 99);
+
+    // SC2: Async Redis counter increment (fire-and-forget, never blocks request)
+    incrementRedisCounters(statusCode).catch(() => { /* swallow — Redis optional */ });
 };
 
 /**
@@ -281,4 +292,120 @@ const formatUptime = (ms: number): string => {
     if (hours > 0) return `${hours}h ${minutes % 60}m`;
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
+};
+
+// ============================================================================
+// Metrics Persistence — periodic snapshot to Redis for production monitoring
+// ============================================================================
+
+const METRICS_REDIS_KEY = 'metrics:snapshot';
+const METRICS_GLOBAL_REQUESTS_KEY = 'metrics:global:totalRequests';
+const METRICS_GLOBAL_ERRORS_KEY = 'metrics:global:totalErrors';
+const METRICS_STATUS_PREFIX = 'metrics:global:status:';
+const METRICS_INSTANCES_KEY = 'metrics:instances';
+const METRICS_PERSIST_INTERVAL_MS = 60_000; // Every 60 seconds
+
+/**
+ * SC2: Increment Redis-backed global counters (fire-and-forget).
+ * These survive restarts and are consistent across all instances.
+ */
+const incrementRedisCounters = async (statusCode: number): Promise<void> => {
+    const client = getRedisClient();
+    if (!client) return;
+
+    const pipeline = client.pipeline();
+    pipeline.incr(METRICS_GLOBAL_REQUESTS_KEY);
+    if (statusCode >= 400) {
+        pipeline.incr(METRICS_GLOBAL_ERRORS_KEY);
+    }
+    pipeline.incr(`${METRICS_STATUS_PREFIX}${statusCode}`);
+    // Register this instance in the active instances set (expire 5 min)
+    pipeline.sadd(METRICS_INSTANCES_KEY, INSTANCE_ID);
+    pipeline.expire(METRICS_INSTANCES_KEY, 300);
+    await pipeline.exec();
+};
+
+/**
+ * Persist current metrics snapshot to Redis (production only).
+ * Each instance writes its own snapshot keyed by INSTANCE_ID.
+ */
+const persistMetricsToRedis = async (): Promise<void> => {
+    const client = getRedisClient();
+    if (!client) return;
+
+    try {
+        const summary = getMetricsSummary();
+        const instanceKey = `${METRICS_REDIS_KEY}:${INSTANCE_ID}`;
+        await client.setex(instanceKey, 300, JSON.stringify({
+            ...summary,
+            persistedAt: new Date().toISOString(),
+            instanceId: INSTANCE_ID,
+        }));
+    } catch (error) {
+        log.error('Failed to persist metrics to Redis', error);
+    }
+};
+
+/**
+ * SC2: Get aggregated global metrics from Redis (cross-instance totals).
+ * Returns null if Redis is unavailable.
+ */
+export const getAggregatedMetrics = async (): Promise<{
+    totalRequests: number;
+    totalErrors: number;
+    activeInstances: string[];
+    statusCodes: Record<string, number>;
+} | null> => {
+    const client = getRedisClient();
+    if (!client) return null;
+
+    try {
+        const [totalReqs, totalErrs, instances] = await Promise.all([
+            client.get(METRICS_GLOBAL_REQUESTS_KEY),
+            client.get(METRICS_GLOBAL_ERRORS_KEY),
+            client.smembers(METRICS_INSTANCES_KEY),
+        ]);
+
+        // Fetch common status codes
+        const statusKeys = ['200', '201', '400', '401', '403', '404', '429', '500'];
+        const statusResults = await Promise.all(
+            statusKeys.map(code => client.get(`${METRICS_STATUS_PREFIX}${code}`))
+        );
+
+        const statusCodes: Record<string, number> = {};
+        statusKeys.forEach((code, i) => {
+            const val = Number(statusResults[i]) || 0;
+            if (val > 0) statusCodes[code] = val;
+        });
+
+        return {
+            totalRequests: Number(totalReqs) || 0,
+            totalErrors: Number(totalErrs) || 0,
+            activeInstances: instances,
+            statusCodes,
+        };
+    } catch (error) {
+        log.error('Failed to get aggregated metrics from Redis', error);
+        return null;
+    }
+};
+
+let persistTimer: NodeJS.Timeout | null = null;
+
+/** Start periodic metrics persistence (call once in server startup) */
+export const startMetricsPersistence = (): void => {
+    if (!isProduction) return;
+    if (persistTimer) return;
+
+    persistTimer = setInterval(persistMetricsToRedis, METRICS_PERSIST_INTERVAL_MS);
+    persistTimer.unref();
+    log.info('Metrics persistence started (Redis snapshot every 60s)');
+};
+
+/** Stop metrics persistence (call on shutdown) */
+export const stopMetricsPersistence = (): void => {
+    if (persistTimer) {
+        clearInterval(persistTimer);
+        persistTimer = null;
+    }
 };

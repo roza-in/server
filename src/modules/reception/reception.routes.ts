@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { autoHospitalScope } from '../../middlewares/hospital-scope.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { idempotencyMiddleware } from '../../middlewares/idempotency.middleware.js';
 import {
@@ -13,6 +14,8 @@ import {
     recordCashPayment,
     checkInWithPayment,
     getPrescription,
+    verifyCashPayment,
+    getCashReconciliation,
 } from './reception.controller.js';
 import {
     queueQuerySchema,
@@ -30,6 +33,8 @@ const router = Router();
 // All routes require authentication and reception/hospital/admin role
 router.use(authMiddleware);
 router.use(roleGuard('reception', 'hospital', 'admin'));
+// SC5: Auto-scope to user's hospital — prevents cross-hospital access
+router.use(autoHospitalScope());
 
 /**
  * @route GET /api/v1/reception/queue
@@ -118,6 +123,24 @@ router.post(
     idempotencyMiddleware(),
     recordCashPayment
 );
+
+/**
+ * @route PATCH /api/v1/reception/payments/:paymentId/verify
+ * @desc Supervisor verifies a cash payment (I6)
+ * @access Private (hospital, admin — NOT reception self-verify)
+ */
+router.patch(
+    '/payments/:paymentId/verify',
+    roleGuard('hospital', 'admin'),
+    verifyCashPayment
+);
+
+/**
+ * @route GET /api/v1/reception/reconciliation
+ * @desc End-of-day cash reconciliation summary (I6)
+ * @access Private (reception, hospital, admin)
+ */
+router.get('/reconciliation', getCashReconciliation);
 
 export const receptionRoutes = router;
 export default router;

@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { logger } from '../../config/logger.js';
 import { doctorRepository } from '../../database/repositories/doctor.repo.js';
-import type { DayOfWeek, ConsultationType, AppointmentSlot, AvailableSlot } from './schedule.types.js';
+import type { DayOfWeek, ConsultationType, AvailableSlot } from './schedule.types.js';
 
 /**
  * Slot Service - Generates and manages appointment slots from schedules
@@ -55,8 +55,8 @@ class SlotService {
 
         // Get doctor for slot config
         const doctor = await doctorRepository.findWithRelations(doctorId);
-        const defaultSlotDuration = doctor?.slotDurationMinutes || 15;
-        const defaultMaxPatients = doctor?.maxPatientsPerSlot || 1;
+        const defaultSlotDuration = doctor?.slot_duration_minutes || 15;
+        const defaultMaxPatients = doctor?.max_patients_per_slot || 1;
 
         // For each date in range
         const currentDate = new Date(startDate);

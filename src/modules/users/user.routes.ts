@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
 import {
     listUsers,
     getUser,
@@ -12,6 +13,13 @@ import {
     deleteUser,
     getUserStats,
 } from './user.controller.js';
+import {
+    listUsersSchema,
+    getUserSchema,
+    updateUserSchema,
+    updateMeSchema,
+    blockUserSchema,
+} from './user.validator.js';
 
 const router = Router();
 
@@ -33,7 +41,7 @@ router.get('/me', getMe);
  * @desc Update current user profile
  * @access Private
  */
-router.patch('/me', updateMe);
+router.patch('/me', validate(updateMeSchema), updateMe);
 
 // ============================================================================
 // Admin Only Routes
@@ -51,28 +59,28 @@ router.get('/stats', roleGuard('admin'), getUserStats);
  * @desc List all users with filters
  * @access Admin
  */
-router.get('/', roleGuard('admin'), listUsers);
+router.get('/', roleGuard('admin'), validate(listUsersSchema), listUsers);
 
 /**
  * @route GET /api/v1/users/:userId
  * @desc Get user by ID
  * @access Admin
  */
-router.get('/:userId', roleGuard('admin'), getUser);
+router.get('/:userId', roleGuard('admin'), validate(getUserSchema), getUser);
 
 /**
  * @route PATCH /api/v1/users/:userId
  * @desc Update user by ID
  * @access Admin
  */
-router.patch('/:userId', roleGuard('admin'), updateUser);
+router.patch('/:userId', roleGuard('admin'), validate(updateUserSchema), updateUser);
 
 /**
  * @route POST /api/v1/users/:userId/block
  * @desc Block a user
  * @access Admin
  */
-router.post('/:userId/block', roleGuard('admin'), blockUser);
+router.post('/:userId/block', roleGuard('admin'), validate(blockUserSchema), blockUser);
 
 /**
  * @route POST /api/v1/users/:userId/unblock

@@ -1,7 +1,3 @@
-// @ts-nocheck
-// Note: @ts-nocheck used temporarily due to complex type inference issues
-// with Zod schemas and Supabase query types
-
 // Types - using validator types as they're derived from Zod schemas
 export type {
   BookAppointmentInput,

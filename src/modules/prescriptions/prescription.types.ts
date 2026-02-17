@@ -1,102 +1,64 @@
+import type { Prescription } from '../../types/database.types.js';
+
 // ============================================================================
-// Prescription Module Types
+// Prescription Module Types — aligned with DB schema (004_appointments_consultations.sql)
 // ============================================================================
 
-export interface Prescription {
-    id: string;
-    prescription_number: string;
-    appointment_id: string;
-    consultation_id: string | null;
-    doctor_id: string;
-    patient_id: string;
-    hospital_id: string | null;
-    chief_complaints: string | null;
-    diagnosis: string;
-    diagnosis_icd_codes: string[] | null;
-    vitals: PrescriptionVitals | null;
-    medications: Medication[];
-    lab_tests: LabTest[] | null;
-    investigations: Investigation[] | null;
-    lifestyle_advice: string[] | null;
-    dietary_advice: string[] | null;
-    general_advice: string | null;
-    precautions: string | null;
-    follow_up_date: string | null;
-    follow_up_instructions: string | null;
-    valid_until: string | null;
-    pdf_url: string | null;
-    signed_at: string | null;
-    is_active: boolean;
-    created_at: string;
-    updated_at: string;
-}
+// Re-export the canonical DB type
+export type { Prescription };
 
-export interface PrescriptionVitals {
-    bp_systolic?: number;
-    bp_diastolic?: number;
-    pulse?: number;
-    temp?: number;
-    weight?: number;
-    height?: number;
-    spo2?: number;
-}
-
+/**
+ * Medication JSONB shape stored in prescriptions.medications
+ */
 export interface Medication {
     name: string;
-    generic_name?: string;
     dosage: string;
     frequency: string;
     duration: string;
+    timing?: string;
     instructions?: string;
-    meal_relation?: 'before' | 'after' | 'with' | 'any';
-    route?: string;
-    quantity?: number;
 }
 
-export interface LabTest {
-    name: string;
-    instructions?: string;
-    urgency?: 'routine' | 'urgent' | 'stat';
-}
-
-export interface Investigation {
-    type: string;
-    name: string;
-    instructions?: string;
+export interface PrescriptionWithRelations extends Prescription {
+    doctors?: {
+        users?: { name: string | null } | null;
+    } | null;
+    consultation?: {
+        id: string;
+        appointment?: Record<string, unknown> | null;
+    } | null;
+    hospitals?: {
+        id: string;
+        name: string;
+        slug?: string;
+    } | null;
 }
 
 export interface PrescriptionListItem {
     id: string;
-    prescription_number: string;
-    diagnosis: string;
-    doctor_name: string;
+    prescription_number: string | null;
+    diagnosis: string[] | null;
+    doctor_name: string | null;
     hospital_name: string | null;
     created_at: string;
 }
 
 export interface CreatePrescriptionInput {
-    appointment_id: string;
-    consultation_id?: string;
-    chief_complaints?: string;
-    diagnosis: string;
-    diagnosis_icd_codes?: string[];
-    vitals?: PrescriptionVitals;
+    consultation_id: string;
+    diagnosis?: string[];
     medications: Medication[];
-    lab_tests?: LabTest[];
-    investigations?: Investigation[];
-    lifestyle_advice?: string[];
-    dietary_advice?: string[];
-    general_advice?: string;
-    precautions?: string;
-    follow_up_date?: string;
-    follow_up_instructions?: string;
+    lab_tests?: string[];
+    imaging_tests?: string[];
+    diet_advice?: string;
+    lifestyle_advice?: string;
+    general_instructions?: string;
+    valid_until?: string;
 }
 
 export interface PrescriptionFilters {
-    patientId?: string;
-    doctorId?: string;
-    hospitalId?: string;
+    patient_id?: string;
+    doctor_id?: string;
+    hospital_id?: string;
     page?: number;
     limit?: number;
 }
-

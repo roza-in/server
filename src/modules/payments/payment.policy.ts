@@ -1,6 +1,5 @@
 import { BasePolicy } from '../../common/authorization/types.js';
 import type { AuthUser } from '../../types/request.js';
-import { ForbiddenError } from '../../common/errors/index.js';
 
 export class PaymentPolicy extends BasePolicy<any> {
 
@@ -62,13 +61,8 @@ export class PaymentPolicy extends BasePolicy<any> {
      */
     canRefundPayment(user: AuthUser, payment: { hospital_id?: string | null }): boolean {
         if (this.isAdmin(user)) return true;
-
-        // Only admins usually process refunds, but maybe hospitals can initiate?
-        // Based on requirements, refunds might be admin only or hospital initiated.
-        // Let's allow hospital to initiate refund for their own payments.
         if (user.role === 'hospital' && user.hospitalId === payment.hospital_id) return true;
-
-        throw new ForbiddenError('You are not authorized to refund this payment');
+        return false;
     }
 
     /**

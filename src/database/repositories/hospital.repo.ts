@@ -117,33 +117,60 @@ export class HospitalRepository extends BaseRepository<Hospital> {
             // Assuming 'confirmed' or 'checked_in' counts as active/in-progress
             .in('status', ['confirmed', 'checked_in', 'in_progress']);
 
-        if (doctorsError) throw doctorsError;
+        // Revenue: sum of captured payments
+        const { data: revenueData } = await this.supabase
+            .from('payments')
+            .select('amount')
+            .eq('hospital_id', hospitalId)
+            .eq('status', 'captured');
 
-        // Count unique patients (placeholder logic for now, ideally strictly distinct query)
-        // For speed, just using appointment count proxy or 0 for now if distinct is expensive without RPC
-        const patientsSeen = 0;
+        const totalRevenue = (revenueData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+        // Monthly revenue
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+        const { data: monthlyRevenueData } = await this.supabase
+            .from('payments')
+            .select('amount')
+            .eq('hospital_id', hospitalId)
+            .eq('status', 'captured')
+            .gte('created_at', monthStart);
+
+        const monthlyRevenue = (monthlyRevenueData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+        // Ratings
+        const { data: ratingData } = await this.supabase
+            .from('ratings')
+            .select('rating')
+            .eq('hospital_id', hospitalId);
+
+        const ratings = ratingData || [];
+        const averageRating = ratings.length > 0
+            ? ratings.reduce((sum: number, r: any) => sum + r.rating, 0) / ratings.length
+            : 0;
+
+        if (doctorsError) throw doctorsError;
 
         return {
             totalDoctors: doctorsCount || 0,
-            activeDoctors: doctorsCount || 0, // Assuming all are active for now
+            activeDoctors: doctorsCount || 0,
             totalAppointments: totalAppointments || 0,
             todayAppointments: todayAppointments || 0,
             completedAppointments: completedAppointments || 0,
             cancelledAppointments: cancelledAppointments || 0,
             pendingAppointments: pendingAppointments || 0,
             activeAppointments: activeAppointments || 0,
-            totalRevenue: 0, // Placeholder
-            monthlyRevenue: 0, // Placeholder
-            totalPatients: patientsSeen,
-            averageRating: 0,
-            totalReviews: 0,
-            pendingSettlement: 0
+            totalRevenue,
+            monthlyRevenue,
+            totalPatients: completedAppointments || 0,
+            averageRating: Math.round(averageRating * 10) / 10,
+            totalReviews: ratings.length,
+            pendingSettlement: 0,
         };
     }
 
     async findBySlugWithDoctors(slug: string): Promise<any | null> {
         const { data, error } = await this.getQuery()
-            .select('*, doctors(*, users(*))')
+            .select('*, doctors(*, users!doctors_user_id_fkey(*))')
             .eq('slug', slug)
             .single();
 
@@ -183,20 +210,28 @@ export class HospitalRepository extends BaseRepository<Hospital> {
     }
 
     async findPayments(hospitalId: string, filters: any = {}) {
-        const { data, error, count } = await this.supabase
+        let query = this.supabase
             .from('payments')
-            .select('*, patient:patient_id(*)', { count: 'exact' })
+            .select('*, payer:payer_user_id(id, name, phone, email)', { count: 'exact' })
             .eq('hospital_id', hospitalId);
 
+        if (filters.status) query = query.eq('status', filters.status);
+        if (filters.date_from) query = query.gte('created_at', filters.date_from);
+        if (filters.date_to) query = query.lte('created_at', filters.date_to);
+
+        query = query.order('created_at', { ascending: false });
+
+        const { data, error, count } = await query;
         if (error) throw error;
         return { payments: data, total: count || 0 };
     }
 
     async findInvoices(hospitalId: string, filters: any = {}) {
         const { data, error, count } = await this.supabase
-            .from('invoices')
-            .select('*', { count: 'exact' })
-            .eq('hospital_id', hospitalId);
+            .from('settlement_invoices')
+            .select('*, settlement:settlements!inner(*)', { count: 'exact' })
+            .eq('settlement.entity_type', 'hospital')
+            .eq('settlement.entity_id', hospitalId);
 
         if (error) throw error;
         return { invoices: data, total: count || 0 };

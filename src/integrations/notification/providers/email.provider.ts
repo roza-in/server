@@ -46,7 +46,7 @@ class EmailProvider {
 
     try {
       const mailOptions = {
-        from: `"${env.SMTP_FROM_NAME || 'ROZX Healthcare'}" <${env.SMTP_FROM_EMAIL}>`,
+        from: `"${env.SMTP_FROM_NAME || 'Rozx Healthcare'}" <${env.SMTP_FROM_EMAIL}>`,
         to,
         subject,
         [isHtml ? 'html' : 'text']: body,

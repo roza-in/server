@@ -1,6 +1,19 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { autoHospitalScope } from '../../middlewares/hospital-scope.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
+import {
+  createScheduleSchema,
+  bulkCreateSchedulesSchema,
+  updateScheduleSchema,
+  deleteScheduleSchema,
+  getDoctorSchedulesSchema,
+  createOverrideSchema,
+  deleteOverrideSchema,
+  getOverridesSchema,
+  getAvailableSlotsSchema,
+} from './schedule.validator.js';
 import {
   createSchedule,
   updateSchedule,
@@ -26,23 +39,26 @@ const router = Router();
  * @desc Get doctor's weekly schedule
  * @access Public
  */
-router.get('/doctor/:doctorId', getDoctorSchedules);
+router.get('/doctor/:doctorId', validate(getDoctorSchedulesSchema), getDoctorSchedules);
 
 /**
  * @route GET /api/v1/doctors/:doctorId/slots
  * @desc Get available slots for booking
  * @access Public
  */
-router.get('/doctors/:doctorId/slots', getAvailableSlots);
+router.get('/doctors/:doctorId/slots', validate(getAvailableSlotsSchema), getAvailableSlots);
 
 // ============================================================================
 // PROTECTED ROUTES - Auth required
 // ============================================================================
 
 router.use(authMiddleware);
+// SC5: Auto-scope hospital staff to their own hospital
+router.use(autoHospitalScope());
 
 // ============================================================================
 // HOSPITAL ADMIN ROUTES - Schedule Management
+// SC5: Auto-scope to user's hospital to prevent cross-hospital schedule access
 // ============================================================================
 
 /**
@@ -53,6 +69,7 @@ router.use(authMiddleware);
 router.post(
   '/doctors/:doctorId/schedules',
   roleGuard('hospital', 'admin'),
+  validate(createScheduleSchema),
   createSchedule
 );
 
@@ -64,6 +81,7 @@ router.post(
 router.put(
   '/doctors/:doctorId/schedules',
   roleGuard('hospital', 'admin'),
+  validate(bulkCreateSchedulesSchema),
   bulkCreateSchedules
 );
 
@@ -75,6 +93,7 @@ router.put(
 router.patch(
   '/:scheduleId',
   roleGuard('hospital', 'admin'),
+  validate(updateScheduleSchema),
   updateSchedule
 );
 
@@ -86,6 +105,7 @@ router.patch(
 router.delete(
   '/:scheduleId',
   roleGuard('hospital', 'admin'),
+  validate(deleteScheduleSchema),
   deleteSchedule
 );
 
@@ -101,6 +121,7 @@ router.delete(
 router.post(
   '/doctors/:doctorId/overrides',
   roleGuard('hospital', 'admin'),
+  validate(createOverrideSchema),
   createOverride
 );
 
@@ -112,6 +133,7 @@ router.post(
 router.get(
   '/doctors/:doctorId/overrides',
   roleGuard('hospital', 'admin'),
+  validate(getOverridesSchema),
   getOverrides
 );
 
@@ -123,6 +145,7 @@ router.get(
 router.delete(
   '/overrides/:overrideId',
   roleGuard('hospital', 'admin'),
+  validate(deleteOverrideSchema),
   deleteOverride
 );
 

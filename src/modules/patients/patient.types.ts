@@ -15,16 +15,16 @@ export interface ActivityTimelineItem {
     title: string;
     description: string;
     timestamp: string;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
 }
 
 export interface PatientDashboardData {
     user: {
         id: string;
         name: string;
-        email?: string;
-        phone: string;
-        avatar_url?: string | null;
+        email: string | null;
+        phone: string | null;
+        avatar_url: string | null;
     };
     stats: PatientDashboardStats;
     upcomingAppointments: AppointmentListItem[];

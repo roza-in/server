@@ -10,8 +10,17 @@ import {
   rateAppointment,
   rescheduleAppointment,
   getConsultationFee,
-  checkAvailability
+  checkAvailability,
+  updateAppointmentStatus,
+  markNoShow,
+  getTodayAppointments
 } from './appointment.controller.js';
+import {
+  joinWaitlist,
+  getMyWaitlist,
+  cancelWaitlist,
+  getWaitingPatients
+} from './waitlist.controller.js';
 import {
   bookAppointmentSchema,
   listAppointmentsSchema,
@@ -20,7 +29,9 @@ import {
   rateAppointmentSchema,
   getAppointmentSchema,
   feeBreakdownSchema,
-  checkAvailabilitySchema
+  checkAvailabilitySchema,
+  updateAppointmentStatusSchema,
+  checkInSchema,
 } from './appointment.validator.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 
@@ -62,11 +73,79 @@ router.post(
 router.get('/', authMiddleware, validate(listAppointmentsSchema), listAppointments);
 
 /**
+ * @route GET /api/v1/appointments/today
+ * @desc Get today's appointments (for dashboard)
+ * @access Private
+ */
+router.get('/today', authMiddleware, getTodayAppointments);
+
+// ============================================================================
+// WAITLIST (I1 — appointment_waitlist table)
+// Must be BEFORE /:appointmentId to avoid param capture
+// ============================================================================
+
+/**
+ * @route POST /api/v1/appointments/waitlist
+ * @desc Join waitlist for a doctor's slot
+ * @access Private (patient)
+ */
+router.post('/waitlist', authMiddleware, roleGuard('patient'), joinWaitlist);
+
+/**
+ * @route GET /api/v1/appointments/waitlist
+ * @desc Get my waitlist entries
+ * @access Private (patient)
+ */
+router.get('/waitlist', authMiddleware, roleGuard('patient'), getMyWaitlist);
+
+/**
+ * @route GET /api/v1/appointments/waitlist/doctor/:doctorId
+ * @desc Get waiting patients for a doctor (doctor/hospital view)
+ * @access Private (doctor, hospital, admin)
+ */
+router.get('/waitlist/doctor/:doctorId', authMiddleware, roleGuard('doctor', 'hospital', 'admin'), getWaitingPatients);
+
+/**
+ * @route DELETE /api/v1/appointments/waitlist/:entryId
+ * @desc Cancel a waitlist entry
+ * @access Private (patient)
+ */
+router.delete('/waitlist/:entryId', authMiddleware, roleGuard('patient'), cancelWaitlist);
+
+/**
  * @route GET /api/v1/appointments/:appointmentId
  * @desc Get appointment by ID
  * @access Private (involved parties only)
  */
 router.get('/:appointmentId', authMiddleware, validate(getAppointmentSchema), getAppointment);
+
+/**
+ * @route PATCH /api/v1/appointments/:appointmentId/status
+ * @desc Update appointment status
+ * @access Private (doctor, hospital, admin)
+ */
+router.patch(
+  '/:appointmentId/status',
+  authMiddleware,
+  roleGuard('doctor', 'hospital', 'reception', 'admin'),
+  validate(updateAppointmentStatusSchema),
+  idempotencyMiddleware(),
+  updateAppointmentStatus
+);
+
+/**
+ * @route PATCH /api/v1/appointments/:appointmentId/no-show
+ * @desc Mark appointment as no-show
+ * @access Private (doctor, hospital, admin)
+ */
+router.patch(
+  '/:appointmentId/no-show',
+  authMiddleware,
+  roleGuard('doctor', 'hospital', 'reception', 'admin'),
+  validate(getAppointmentSchema),
+  idempotencyMiddleware(),
+  markNoShow
+);
 
 /**
  * @route PATCH /api/v1/appointments/:appointmentId/cancel
@@ -110,4 +189,3 @@ router.post(
 
 export const appointmentRoutes = router;
 export default router;
-

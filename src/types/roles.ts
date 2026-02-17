@@ -1,5 +1,5 @@
 /**
- * User Role Types - ROZX Healthcare Platform
+ * User Role Types - Rozx Healthcare Platform
  * 
  * Roles (from database migration 001_extensions_enums.sql):
  * - patient:    End user / consumer

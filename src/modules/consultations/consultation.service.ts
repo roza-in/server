@@ -15,8 +15,8 @@ import {
   InvalidAppointmentStatusError,
 } from '../../common/errors/index.js';
 import type {
-  Consultation,
   ConsultationWithDetails,
+  ConsultationResponse,
   VideoCallToken,
   ConsultationStatus,
 } from './consultation.types.js';
@@ -24,8 +24,6 @@ import type {
   StartConsultationInput,
   ListConsultationsInput,
   CreatePrescriptionInput,
-  UpdateConsultationNotesInput,
-  UpdateConsultationVitalsInput
 } from './consultation.validator.js';
 
 /**
@@ -47,7 +45,7 @@ class ConsultationService {
    * @throws {InvalidAppointmentStatusError} If appointment status is not confirmed or checked_in
    * @throws {BadRequestError} If transaction fails
    */
-  async start(userId: string, role: string, data: StartConsultationInput): Promise<Consultation> {
+  async start(userId: string, role: string, data: StartConsultationInput): Promise<ConsultationResponse> {
     const appointment = await appointmentRepository.findByIdWithRelations(data.appointmentId);
 
     if (!appointment) {
@@ -122,10 +120,7 @@ class ConsultationService {
     const { data: result, error } = await consultationRepository.rpc('start_consultation', {
       p_appointment_id: appointment.id,
       p_consultation_id: consultationId,
-      p_doctor_id: appointment.doctor_id,
-      p_patient_id: appointment.patient_id,
       p_room_id: roomId,
-      p_scheduled_duration: (appointment.doctor as any)?.consultation_duration || 15,
       p_started_at: new Date().toISOString()
     });
 
@@ -178,7 +173,7 @@ class ConsultationService {
    * @param notes - Optional final consolidated doctor notes
    * @returns Updated consultation record
    */
-  async end(consultationId: string, userId: string, role: string, notes?: string): Promise<Consultation> {
+  async end(consultationId: string, userId: string, role: string, notes?: string): Promise<ConsultationResponse> {
     const consultation = await consultationRepository.findByIdWithRelations(consultationId);
 
     if (!consultation) {
@@ -186,9 +181,9 @@ class ConsultationService {
     }
 
     // Verify doctor permission
-    // Provide fallback for missing direct columns using nested appointment
-    const doctorUserId = consultation.doctor?.user_id || consultation.appointment?.doctor?.user_id;
-    const doctorId = consultation.doctor_id || consultation.appointment?.doctor_id;
+    // Consultation table has no doctor_id — get from joined appointment
+    const doctorUserId = consultation.appointment?.doctor?.user_id || (consultation.appointment?.doctor as any)?.users?.user_id;
+    const doctorId = consultation.appointment?.doctor_id;
 
     let isAuthorized = false;
 
@@ -222,14 +217,14 @@ class ConsultationService {
 
     const endedAt = new Date();
     const startedAt = new Date(consultation.started_at);
-    const actualDuration = Math.round((endedAt.getTime() - startedAt.getTime()) / 60000);
+    const durationSeconds = Math.round((endedAt.getTime() - startedAt.getTime()) / 1000);
 
     // Use atomic RPC to end consultation and update appointment
     const { data: result, error } = await consultationRepository.rpc('end_consultation', {
       p_consultation_id: consultationId,
       p_appointment_id: consultation.appointment_id,
       p_notes: notes || null,
-      p_actual_duration: actualDuration,
+      p_duration_seconds: durationSeconds,
       p_ended_at: endedAt.toISOString(),
     });
 
@@ -252,7 +247,7 @@ class ConsultationService {
    * @param role - Requesting user role
    * @returns Detailed consultation information
    */
-  async getById(consultationId: string, userId: string, role: string): Promise<ConsultationWithDetails> {
+  async getById(consultationId: string, userId: string, role: string): Promise<ConsultationResponse> {
     const consultation = await consultationRepository.findByIdWithRelations(consultationId);
 
     if (!consultation) {
@@ -398,32 +393,39 @@ class ConsultationService {
       throw new NotFoundError('Consultation');
     }
 
-    // Verify doctor
-    const doctorId = consultation.doctor_id || consultation.appointment?.doctor_id;
-    const doctorUserId = consultation.doctor?.user_id || consultation.appointment?.doctor?.user_id;
+    // Verify doctor — consultation has no doctor_id, get from appointment
+    const doctorId = consultation.appointment?.doctor_id;
+    const doctorUserId = consultation.appointment?.doctor?.user_id;
 
-    if (doctorUserId !== userId && doctorId !== userId) {
-      throw new ForbiddenError('Only the treating doctor can create prescriptions');
+    if (doctorUserId !== userId) {
+      const doctorProfile = await doctorRepository.findByUserId(userId);
+      if (!doctorProfile || doctorProfile.id !== doctorId) {
+        throw new ForbiddenError('Only the treating doctor can create prescriptions');
+      }
     }
 
     // Delegate to prescriptionService
-    return prescriptionService.create(doctorId, {
-      appointment_id: data.appointmentId,
+    return prescriptionService.create(doctorId!, {
+      appointment_id: consultation.appointment_id,
       consultation_id: data.consultationId,
-      chief_complaints: data.chiefComplaints,
       diagnosis: data.diagnosis,
-      vitals: consultation.vitals, // Pass consultation vitals
+      vitals: consultation.vitals,
       medications: data.medications.map((m: any) => ({
         name: m.name,
         dosage: m.dosage,
         frequency: m.frequency,
         duration: m.duration,
         instructions: m.instructions,
-        meal_relation: m.timing.toLowerCase().includes('before') ? 'before' : 'after'
+        meal_relation: m.timing?.toLowerCase().includes('before') ? 'before' : 'after'
       })),
-      lab_tests: data.labTests?.map((t: string) => ({ name: t })),
-      general_advice: data.advice,
-      follow_up_date: data.followUpDate,
+      lab_tests: data.labTests,
+      imaging_tests: data.imagingTests,
+      diet_advice: data.dietAdvice,
+      lifestyle_advice: data.lifestyleAdvice,
+      general_instructions: data.generalInstructions,
+      follow_up_days: data.followUpDays,
+      follow_up_notes: data.followUpNotes,
+      valid_until: data.validUntil,
     } as any);
   }
 
@@ -434,10 +436,10 @@ class ConsultationService {
     const consultation = await consultationRepository.findByIdWithRelations(consultationId);
     if (!consultation) throw new NotFoundError('Consultation');
 
-    // Resolve IDs from consultation or nested appointment
-    const patientId = consultation.patient_id || consultation.appointment?.patient_id;
-    const doctorId = consultation.doctor_id || consultation.appointment?.doctor_id;
-    const doctorUserId = consultation.doctor?.user_id || consultation.appointment?.doctor?.user_id;
+    // Resolve IDs from nested appointment (consultation table has no doctor_id/patient_id)
+    const patientId = consultation.appointment?.patient_id;
+    const doctorId = consultation.appointment?.doctor_id;
+    const doctorUserId = consultation.appointment?.doctor?.user_id;
 
     if (role === 'doctor' && (doctorId === userId || doctorUserId === userId || (await doctorRepository.findByUserId(userId))?.id === doctorId)) {
       // Doctor access valid
@@ -453,19 +455,27 @@ class ConsultationService {
   /**
    * Update consultation notes
    */
-  async updateNotes(consultationId: string, userId: string, notes: string): Promise<void> {
+  async updateNotes(consultationId: string, userId: string, notes: Record<string, any>): Promise<void> {
     const consultation = await consultationRepository.findById(consultationId);
     if (!consultation) throw new NotFoundError('Consultation');
 
-    // Verify doctor
-    if (consultation.doctor_id !== userId && (await doctorRepository.findByUserId(userId))?.id !== consultation.doctor_id) {
+    // Verify doctor — consultation has no doctor_id, check via appointment
+    const appointment = await appointmentRepository.findByIdWithRelations(consultation.appointment_id);
+    const doctorProfile = await doctorRepository.findByUserId(userId);
+    if (!doctorProfile || doctorProfile.id !== appointment?.doctor_id) {
       throw new ForbiddenError('Only the treating doctor can update notes');
     }
 
-    await consultationRepository.update(consultationId, {
-      doctor_notes: notes,
+    const updateData: Record<string, any> = {
       updated_at: new Date().toISOString(),
-    });
+    };
+    if (notes.chiefComplaint !== undefined) updateData.chief_complaint = notes.chiefComplaint;
+    if (notes.historyOfIllness !== undefined) updateData.history_of_illness = notes.historyOfIllness;
+    if (notes.examinationFindings !== undefined) updateData.examination_findings = notes.examinationFindings;
+    if (notes.diagnosis !== undefined) updateData.diagnosis = notes.diagnosis;
+    if (notes.treatmentPlan !== undefined) updateData.treatment_plan = notes.treatmentPlan;
+
+    await consultationRepository.update(consultationId, updateData);
   }
 
   /**
@@ -475,8 +485,10 @@ class ConsultationService {
     const consultation = await consultationRepository.findById(consultationId);
     if (!consultation) throw new NotFoundError('Consultation');
 
-    // Verify doctor
-    if (consultation.doctor_id !== userId && (await doctorRepository.findByUserId(userId))?.id !== consultation.doctor_id) {
+    // Verify doctor — consultation has no doctor_id, check via appointment
+    const appointment = await appointmentRepository.findByIdWithRelations(consultation.appointment_id);
+    const doctorProfile = await doctorRepository.findByUserId(userId);
+    if (!doctorProfile || doctorProfile.id !== appointment?.doctor_id) {
       throw new ForbiddenError('Only the treating doctor can update vitals');
     }
 
@@ -506,7 +518,8 @@ class ConsultationService {
     const prescription = await prescriptionService.getById(prescriptionId);
 
     // Check access
-    const isDoctor = role === 'doctor' && (prescription.doctor?.user_id === userId || prescription.doctor_id === userId);
+    const doctorProfile = role === 'doctor' ? await doctorRepository.findByUserId(userId) : null;
+    const isDoctor = role === 'doctor' && doctorProfile?.id === prescription.doctor_id;
     const isPatient = role === 'patient' && prescription.patient_id === userId;
     const isAdmin = role === 'admin';
 
@@ -534,37 +547,40 @@ class ConsultationService {
   private checkAccess(consultation: any, userId: string, role: string): boolean {
     if (role === 'admin') return true;
 
-    // Handle missing direct columns by checking nested appointment
-    const patientId = consultation.patient_id || consultation.appointment?.patient_id;
-    const doctorId = consultation.doctor_id || consultation.appointment?.doctor_id;
-    const doctorUserId = consultation.doctor?.user_id || consultation.appointment?.doctor?.user_id;
+    // Consultation table has no doctor_id/patient_id — get from joined appointment
+    const patientId = consultation.appointment?.patient_id;
+    const doctorId = consultation.appointment?.doctor_id;
+    const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
 
     if (role === 'patient') return patientId === userId;
     if (role === 'doctor') return (doctorUserId === userId || doctorId === userId);
+    if (role === 'hospital' || role === 'reception') return consultation.appointment?.hospital_id === userId;
     return false;
   }
 
-  private transformConsultation(row: any): Consultation {
+  private transformConsultation(row: any): ConsultationResponse {
     return {
       id: row.id,
       appointmentId: row.appointment_id,
-      doctorId: row.doctor_id || row.appointment?.doctor_id,
-      patientId: row.patient_id || row.appointment?.patient_id,
-      roomId: row.room_id,
       status: row.status,
-      scheduledDuration: row.scheduled_duration,
-      actualDuration: row.actual_duration,
+      roomId: row.room_id,
+      roomUrl: row.room_url,
       startedAt: row.started_at,
       endedAt: row.ended_at,
-      doctorNotes: row.treatment_plan,
+      durationSeconds: row.duration_seconds,
+      chiefComplaint: row.chief_complaint,
+      diagnosis: row.diagnosis,
+      treatmentPlan: row.treatment_plan,
       vitals: row.vitals,
-      recordingUrl: row.recording_url,
+      followUpRequired: row.follow_up_required ?? false,
+      followUpNotes: row.follow_up_notes,
+      followUpDays: row.follow_up_days,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  private transformWithDetails(row: any): ConsultationWithDetails {
+  private transformWithDetails(row: any): ConsultationResponse {
     // Extract relations from direct or nested appointment
     const appointment = row.appointment;
     const doctor = row.doctor || appointment?.doctor;
@@ -598,15 +614,18 @@ class ConsultationService {
 
     const link = `${env.CLIENT_URL}/consultation/${consultationId}`;
 
+    const patientName = patient.name || "Patient";
     await notificationService.send({
       purpose: NotificationPurpose.CONSULTATION_STARTED,
       phone: patient.phone,
       email: patient.email,
       variables: {
         doctor_name: doctorName,
-        patient_name: patient.name || "Patient",
-        link: link
-      }
+        patient_name: patientName,
+        link,
+      },
+      // rozx_consultation_link: {{1}}=patient {{2}}=doctor {{3}}=link
+      whatsappValues: [patientName, doctorName, link],
     });
 
     this.log.info('Sent consultation start notification', { patientId, doctorName, consultationId });

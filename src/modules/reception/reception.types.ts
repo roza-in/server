@@ -1,10 +1,12 @@
 /**
  * Reception Module Types
+ * These use camelCase since they are response DTOs mapped for the frontend.
  */
 
 export interface QueueAppointment {
     id: string;
-    appointmentNumber: string;
+    appointmentNumber: string | null;
+    walkInToken: string | null;
     patient: {
         id: string;
         name: string;
@@ -18,8 +20,6 @@ export interface QueueAppointment {
     };
     scheduledStart: string;
     scheduledEnd: string;
-    startTime?: string;
-    endTime?: string;
     status: string;
     consultationType: string;
     checkedInAt: string | null;
@@ -48,7 +48,7 @@ export interface WalkInBookingInput {
     scheduledDate: string;
     scheduledStart: string;
     patient: {
-        id?: string; // If existing patient
+        id?: string;
         name: string;
         phone: string;
         email?: string;
@@ -74,4 +74,13 @@ export interface CashPaymentInput {
     appointmentId: string;
     amount: number;
     receiptNumber?: string;
+}
+
+export interface PrescriptionResponse {
+    consultation: any;
+    prescription: any;
+    appointment: any;
+    doctor: any;
+    patient: any;
+    hospital: any;
 }

@@ -7,8 +7,9 @@ export class DoctorRepository extends BaseRepository<Doctor> {
     }
 
     /**
-     * Find doctors with full relations (users, hospitals, specializations)
-     * Used for public listing with complete data
+     * Find doctors with relations — slim public listing (excludes large text fields)
+     * Omits: bio, publications, awards, certifications, memberships, available_service,
+     *        social_profiles, faq_content, procedures_performed, education for smaller payloads
      */
     async findManyWithRelations(
         filters: Record<string, any> = {},
@@ -18,9 +19,20 @@ export class DoctorRepository extends BaseRepository<Doctor> {
         const offset = (page - 1) * limit;
 
         try {
-            // Select with relations using Supabase foreign key joins
-            // Note: users.name is the correct column (not full_name)
-            const selectColumns = '*, users!doctors_user_id_fkey(id, name, email, phone, avatar_url), hospitals!doctors_hospital_id_fkey(id, name, city, logo_url), specializations!doctors_specialization_id_fkey(id, name, slug)';
+            // Slim select: only fields needed for listing cards
+            const selectColumns = [
+                'id', 'user_id', 'hospital_id', 'specialization_id',
+                'registration_number', 'registration_council',
+                'qualifications', 'experience_years', 'languages',
+                'consultation_fee_online', 'consultation_fee_in_person',
+                'consultation_fee_walk_in', 'follow_up_fee',
+                'slot_duration_minutes', 'online_consultation_enabled', 'walk_in_enabled',
+                'consultation_types', 'rating', 'total_ratings', 'total_consultations',
+                'verification_status', 'is_active', 'is_available', 'created_at',
+                'users!doctors_user_id_fkey(id, name, email, phone, avatar_url)',
+                'hospitals!doctors_hospital_id_fkey(id, name, city, logo_url)',
+                'specializations!doctors_specialization_id_fkey(id, name, slug)',
+            ].join(', ');
 
             let query = this.getQuery().select(selectColumns, { count: 'exact' });
 
@@ -286,9 +298,11 @@ export class DoctorRepository extends BaseRepository<Doctor> {
             this.log.error(`Error fetching stats for doctor: ${doctorId}`, error);
             return {
                 total_appointments: 0,
-                completed_appointments: 0,
-                cancelled_appointments: 0,
-                total_revenue: 0
+                total_ratings: 0,
+                average_rating: 0,
+                pending_appointments: 0,
+                today_appointments: 0,
+                total_revenue: 0,
             };
         }
         return data;

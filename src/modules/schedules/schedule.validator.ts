@@ -28,13 +28,13 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format,
 // ============================================================
 
 // Create schedule schema
-// NOTE: Consultation types are inherited from doctor.consultation_types (global setting)
 export const createScheduleSchema = z.object({
   params: z.object({
     doctorId: uuidSchema,
   }),
   body: z.object({
     dayOfWeek: dayOfWeekSchema,
+    consultationType: consultationTypeSchema,
     startTime: timeSchema,
     endTime: timeSchema,
     breakStart: timeSchema.optional(),
@@ -61,6 +61,7 @@ export const bulkCreateSchedulesSchema = z.object({
   body: z.object({
     schedules: z.array(z.object({
       dayOfWeek: dayOfWeekSchema,
+      consultationType: consultationTypeSchema,
       startTime: timeSchema,
       endTime: timeSchema,
       breakStart: timeSchema.optional(),

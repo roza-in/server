@@ -118,7 +118,7 @@ class AuthController {
    * Hospital Step 3: Base Profile (Must be authenticated)
    */
   registerHospitalProfile = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.registerHospitalProfile((req as any).user.id, req.body);
+    const result = await authService.registerHospitalProfile((req as any).user.userId, req.body);
     return sendSuccess(res, result, 'Hospital profile updated');
   });
 
@@ -126,7 +126,7 @@ class AuthController {
    * Hospital Step 4: Compliance (Must be authenticated)
    */
   registerHospitalCompliance = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.registerHospitalCompliance((req as any).user.id, req.body);
+    const result = await authService.registerHospitalCompliance((req as any).user.userId, req.body);
     return sendSuccess(res, result, 'Hospital compliance updated');
   });
 
@@ -134,7 +134,7 @@ class AuthController {
    * Hospital Step 5: Address (Must be authenticated)
    */
   registerHospitalAddress = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.registerHospitalAddress((req as any).user.id, req.body);
+    const result = await authService.registerHospitalAddress((req as any).user.userId, req.body);
     return sendSuccess(res, result, 'Hospital registration completed');
   });
 
@@ -142,23 +142,61 @@ class AuthController {
    * Initiate Google OAuth
    */
   initiateGoogleOAuth = asyncHandler(async (req: Request, res: Response) => {
-    const redirectUrl = req.query.redirectUrl as string || env.CORS_ORIGIN;
-    const { url } = await supabaseOAuthService.generateGoogleOAuthUrl(redirectUrl);
-    return sendSuccess(res, { url }, 'Google OAuth URL generated');
+    // Validate redirectUrl — fall back to the FIRST allowed origin (not the entire comma list)
+    let redirectUrl = req.query.redirectUrl as string;
+    if (!redirectUrl) {
+      const firstOrigin = env.CORS_ORIGIN.split(',')[0]?.trim();
+      redirectUrl = firstOrigin ? `${firstOrigin}/callback` : 'http://localhost:3000/callback';
+    }
+    const { url, state } = await supabaseOAuthService.generateGoogleOAuthUrl(redirectUrl);
+
+    // Set the state in a short-lived cookie as a backup channel.
+    // If Supabase ignores our redirectTo (because the URL isn't whitelisted),
+    // the rozx_state param gets lost. The callback handler reads this cookie
+    // as a fallback to look up the PKCE code_verifier.
+    const cookieDomain = env.COOKIE_DOMAIN?.split(':')[0] || undefined;
+    res.cookie('rozx_oauth_state', state, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      domain: cookieDomain,
+      maxAge: 10 * 60 * 1000, // 10 minutes
+    });
+
+    return sendSuccess(res, { url, state }, 'Google OAuth URL generated');
   });
 
   /**
    * Handle Google OAuth Callback
    */
   googleCallback = asyncHandler(async (req: Request, res: Response) => {
-    const { code, state } = req.query as { code: string; state: string };
+    const code = req.query.code as string;
+    // Resolve state: query param > cookie fallback
+    let state = req.query.state as string || '';
+    if (!state) {
+      const cookieState = (req as any).cookies?.rozx_oauth_state;
+      if (cookieState) {
+        state = cookieState;
+        // Clear the one-time cookie
+        const cookieDomain = env.COOKIE_DOMAIN?.split(':')[0] || undefined;
+        res.clearCookie('rozx_oauth_state', { path: '/', domain: cookieDomain });
+      }
+    }
+
     const deviceInfo = {}; // Extracted from middleware or headers if needed
     const ipAddress = req.ip || req.headers['x-forwarded-for'] as string;
     const userAgent = req.headers['user-agent'];
 
     const result = await supabaseOAuthService.handleGoogleCallback(code, state, deviceInfo, ipAddress, userAgent);
 
-    setTokenCookies(res, result.tokens.accessToken, result.tokens.refreshToken, { maxAgeSeconds: result.tokens.expiresIn });
+    // OAuth flows involve cross-site redirects (Google → Supabase → our app).
+    // SameSite=lax is already the base default, but we pass it explicitly here
+    // as documentation that strict would break the post-OAuth cookie flow.
+    setTokenCookies(res, result.tokens.accessToken, result.tokens.refreshToken, {
+      maxAgeSeconds: result.tokens.expiresIn,
+      sameSite: 'lax',
+    });
 
     // If query contains 'redirect', we might want to redirect instead of JSON response
     if (req.query.redirect === 'true' && req.query.redirectTo) {
@@ -266,6 +304,24 @@ class AuthController {
   updateProfile = asyncHandler(async (req: Request, res: Response) => {
     const profile = await authService.updateProfile((req as any).user!.userId, req.body);
     return sendSuccess(res, profile, 'Profile updated successfully');
+  });
+
+  /**
+   * Request Password Reset — sends OTP (C7 fix)
+   */
+  requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
+    const { phone } = req.body;
+    const result = await authService.requestPasswordReset(phone);
+    return sendSuccess(res, result, result.message);
+  });
+
+  /**
+   * Reset Password with OTP (C7 fix)
+   */
+  resetPassword = asyncHandler(async (req: Request, res: Response) => {
+    const result = await authService.resetPassword(req.body);
+    clearTokenCookies(res);
+    return sendSuccess(res, result, result.message);
   });
 }
 

@@ -16,14 +16,13 @@ import type {
   VitalFilters,
   VitalTrends,
   Medication,
-  MedicationWithReminders,
   CreateMedicationInput,
   UpdateMedicationInput,
   MedicationReminder,
-  ReminderAction,
-  ReminderFilters,
+  MedicationFilters,
   Allergy,
   CreateAllergyInput,
+  UpdateAllergyInput,
   MedicalCondition,
   HealthSummary,
   FamilyHealthSummary,
@@ -89,7 +88,7 @@ class HealthRecordsService {
       this.getLatestVitals(userId, memberId),
       this.getActiveMedications(userId, memberId),
       this.getUpcomingReminders(userId, memberId),
-      this.listDocuments({ user_id: userId, family_member_id: memberId, limit: 5 }),
+      this.listDocuments({ patient_id: userId, family_member_id: memberId, limit: 5 }),
     ]);
 
     return {
@@ -109,7 +108,7 @@ class HealthRecordsService {
       .from('family_members')
       .select('*')
       .eq('user_id', userId)
-      .order('is_primary', { ascending: false })
+      .eq('is_active', true)
       .order('name');
 
     if (error) {
@@ -188,8 +187,7 @@ class HealthRecordsService {
     const { data, error } = await this.supabase
       .from('health_documents')
       .insert({
-        user_id: userId,
-        uploaded_by: userId,
+        patient_id: userId,
         ...input,
       })
       .select()
@@ -215,11 +213,11 @@ class HealthRecordsService {
         family_member:family_members(id, name),
         appointment:appointments(
           id, appointment_number, scheduled_date, scheduled_start,
-          doctor:doctors(users(name))
+          doctor:doctors(users!doctors_user_id_fkey(name))
         )
       `)
       .eq('id', documentId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .single();
 
     if (error || !data) {
@@ -231,8 +229,8 @@ class HealthRecordsService {
       appointment: data.appointment
         ? {
           id: data.appointment.id,
-          booking_id: data.appointment.appointment_number,
-          appointment_date: data.appointment.scheduled_date,
+          appointment_number: data.appointment.appointment_number,
+          scheduled_date: data.appointment.scheduled_date,
           doctor_name: data.appointment.doctor?.users?.name || null,
         }
         : null,
@@ -246,11 +244,10 @@ class HealthRecordsService {
     filters: DocumentFilters
   ): Promise<{ documents: HealthDocument[]; total: number }> {
     const {
-      user_id,
+      patient_id,
       family_member_id,
       appointment_id,
       document_type,
-      tags,
       date_from,
       date_to,
       search,
@@ -262,7 +259,7 @@ class HealthRecordsService {
       .from('health_documents')
       .select('*', { count: 'exact' });
 
-    if (user_id) query = query.eq('user_id', user_id);
+    if (patient_id) query = query.eq('patient_id', patient_id);
     if (family_member_id) query = query.eq('family_member_id', family_member_id);
     if (appointment_id) query = query.eq('appointment_id', appointment_id);
     if (date_from) query = query.gte('created_at', date_from);
@@ -284,10 +281,6 @@ class HealthRecordsService {
       } else {
         query = query.eq('document_type', document_type);
       }
-    }
-
-    if (tags && tags.length > 0) {
-      query = query.overlaps('tags', tags);
     }
 
     query = query.order('created_at', { ascending: false });
@@ -322,7 +315,7 @@ class HealthRecordsService {
         updated_at: new Date().toISOString(),
       })
       .eq('id', documentId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .select()
       .single();
 
@@ -342,7 +335,7 @@ class HealthRecordsService {
       .from('health_documents')
       .select('file_url')
       .eq('id', documentId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .single();
 
     if (!doc) {
@@ -354,7 +347,7 @@ class HealthRecordsService {
       .from('health_documents')
       .delete()
       .eq('id', documentId)
-      .eq('user_id', userId);
+      .eq('patient_id', userId);
 
     if (error) {
       throw new BadRequestError('Failed to delete document');
@@ -377,15 +370,14 @@ class HealthRecordsService {
     // Calculate BMI if weight and height provided
     let bmi: number | null = null;
     if (input.weight && input.height) {
-      const weightKg = input.weight_unit === 'lb' ? input.weight * 0.453592 : input.weight;
-      const heightM = input.height_unit === 'ft' ? input.height * 0.3048 : input.height / 100;
-      bmi = Math.round((weightKg / (heightM * heightM)) * 10) / 10;
+      const heightM = input.height / 100;
+      bmi = Math.round((input.weight / (heightM * heightM)) * 10) / 10;
     }
 
     const { data, error } = await this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .insert({
-        user_id: userId,
+        patient_id: userId,
         ...input,
         bmi,
         recorded_at: input.recorded_at || new Date().toISOString(),
@@ -410,9 +402,9 @@ class HealthRecordsService {
     familyMemberId?: string
   ): Promise<VitalRecord | null> {
     let query = this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .select('*')
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .order('recorded_at', { ascending: false })
       .limit(1);
 
@@ -432,13 +424,13 @@ class HealthRecordsService {
   async listVitals(
     filters: VitalFilters
   ): Promise<{ vitals: VitalRecord[]; total: number }> {
-    const { user_id, family_member_id, date_from, date_to, page = 1, limit = 20 } = filters;
+    const { patient_id, family_member_id, date_from, date_to, page = 1, limit = 20 } = filters;
 
     let query = this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .select('*', { count: 'exact' });
 
-    if (user_id) query = query.eq('user_id', user_id);
+    if (patient_id) query = query.eq('patient_id', patient_id);
     if (family_member_id) query = query.eq('family_member_id', family_member_id);
     if (date_from) query = query.gte('recorded_at', date_from);
     if (date_to) query = query.lte('recorded_at', date_to);
@@ -472,9 +464,9 @@ class HealthRecordsService {
     fromDate.setDate(fromDate.getDate() - days);
 
     let query = this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .select('*')
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .gte('recorded_at', fromDate.toISOString())
       .order('recorded_at');
 
@@ -508,9 +500,9 @@ class HealthRecordsService {
         period,
         avg_systolic: avg(records.map((r) => r.blood_pressure_systolic)),
         avg_diastolic: avg(records.map((r) => r.blood_pressure_diastolic)),
-        avg_heart_rate: avg(records.map((r) => r.heart_rate)),
+        avg_pulse_rate: avg(records.map((r) => r.pulse_rate)),
         avg_weight: avg(records.map((r) => r.weight)),
-        avg_blood_sugar: avg(records.map((r) => r.blood_sugar)),
+        avg_blood_sugar_fasting: avg(records.map((r) => r.blood_sugar_fasting)),
         records_count: records.length,
       });
     });
@@ -528,14 +520,12 @@ class HealthRecordsService {
   async addMedication(
     userId: string,
     input: CreateMedicationInput
-  ): Promise<MedicationWithReminders> {
-    const { create_reminders, ...medicationData } = input;
-
+  ): Promise<Medication> {
     const { data: medication, error } = await this.supabase
-      .from('medications')
+      .from('patient_medications')
       .insert({
-        user_id: userId,
-        ...medicationData,
+        patient_id: userId,
+        ...input,
         is_active: true,
       })
       .select()
@@ -546,24 +536,8 @@ class HealthRecordsService {
       throw new BadRequestError('Failed to add medication');
     }
 
-    // Create reminders if requested
-    const reminders: MedicationReminder[] = [];
-    if (create_reminders && input.timing && input.timing.length > 0) {
-      const createdReminders = await this.createMedicationReminders(
-        medication.id,
-        userId,
-        input.family_member_id || null,
-        input.timing
-      );
-      reminders.push(...createdReminders);
-    }
-
     this.log.info('Medication added', { userId, medicationId: medication.id });
-
-    return {
-      ...medication,
-      reminders,
-    };
+    return medication;
   }
 
   /**
@@ -574,11 +548,11 @@ class HealthRecordsService {
     familyMemberId?: string
   ): Promise<Medication[]> {
     let query = this.supabase
-      .from('medications')
+      .from('patient_medications')
       .select('*')
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .eq('is_active', true)
-      .order('name');
+      .order('medication_name');
 
     if (familyMemberId) {
       query = query.eq('family_member_id', familyMemberId);
@@ -604,13 +578,13 @@ class HealthRecordsService {
     input: UpdateMedicationInput
   ): Promise<Medication> {
     const { data, error } = await this.supabase
-      .from('medications')
+      .from('patient_medications')
       .update({
         ...input,
         updated_at: new Date().toISOString(),
       })
       .eq('id', medicationId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .select()
       .single();
 
@@ -626,13 +600,13 @@ class HealthRecordsService {
    */
   async stopMedication(medicationId: string, userId: string): Promise<void> {
     await this.supabase
-      .from('medications')
+      .from('patient_medications')
       .update({
         is_active: false,
         end_date: new Date().toISOString().split('T')[0],
       })
       .eq('id', medicationId)
-      .eq('user_id', userId);
+      .eq('patient_id', userId);
   }
 
   // ============================================================================
@@ -640,46 +614,42 @@ class HealthRecordsService {
   // ============================================================================
 
   /**
-   * Create reminders for medication
+   * Create medication reminders
    */
-  private async createMedicationReminders(
-    medicationId: string,
+  async createMedicationReminder(
     userId: string,
-    familyMemberId: string | null,
-    timings: string[]
-  ): Promise<MedicationReminder[]> {
-    const timeMap: Record<string, string> = {
-      morning: '08:00',
-      afternoon: '13:00',
-      evening: '18:00',
-      night: '21:00',
-      before_meal: '07:30',
-      after_meal: '09:00',
-      with_meal: '08:30',
-      empty_stomach: '06:00',
-      bedtime: '22:00',
-    };
-
-    const today = new Date().toISOString().split('T')[0];
-    const reminders = timings.map((timing) => ({
-      medication_id: medicationId,
-      user_id: userId,
-      family_member_id: familyMemberId,
-      scheduled_time: `${today}T${timeMap[timing] || '09:00'}:00`,
-      status: 'pending' as const,
-    }));
-
+    input: {
+      family_member_id?: string;
+      prescription_id?: string;
+      medicine_id?: string;
+      medicine_name: string;
+      dosage?: string;
+      instructions?: string;
+      frequency: string;
+      reminder_times: string[];
+      meal_timing?: string;
+      start_date: string;
+      end_date?: string;
+      push_enabled?: boolean;
+      sms_enabled?: boolean;
+    }
+  ): Promise<MedicationReminder> {
     const { data, error } = await this.supabase
       .from('medication_reminders')
-      .insert(reminders)
-      .select();
+      .insert({
+        patient_id: userId,
+        ...input,
+        is_active: true,
+      })
+      .select()
+      .single();
 
     if (error) {
-      this.log.error('Failed to create reminders', error);
-      return [];
+      this.log.error('Failed to create reminder', error);
+      throw new BadRequestError('Failed to create medication reminder');
     }
 
-    return data || [];
+    return data;
   }
 
   /**
@@ -689,21 +659,12 @@ class HealthRecordsService {
     userId: string,
     familyMemberId?: string
   ): Promise<MedicationReminder[]> {
-    const now = new Date().toISOString();
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59);
-
     let query = this.supabase
       .from('medication_reminders')
-      .select(`
-        *,
-        medication:medications(name, dosage)
-      `)
-      .eq('user_id', userId)
-      .eq('status', 'pending')
-      .gte('scheduled_time', now)
-      .lte('scheduled_time', endOfDay.toISOString())
-      .order('scheduled_time');
+      .select('*')
+      .eq('patient_id', userId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
 
     if (familyMemberId) {
       query = query.eq('family_member_id', familyMemberId);
@@ -719,36 +680,28 @@ class HealthRecordsService {
   }
 
   /**
-   * Record reminder action
+   * Record medication log entry
    */
   async recordReminderAction(
     userId: string,
-    action: ReminderAction
-  ): Promise<MedicationReminder> {
-    const updateData: any = {
-      status: action.action === 'take' ? 'taken' : 'skipped',
-    };
-
-    if (action.action === 'take') {
-      updateData.taken_at = new Date().toISOString();
-    } else {
-      updateData.skipped_reason = action.skipped_reason || null;
-    }
-
-    if (action.notes) {
-      updateData.notes = action.notes;
-    }
-
+    reminderId: string,
+    action: { action: string; scheduled_time: string; taken_at?: string; skipped_reason?: string }
+  ): Promise<any> {
     const { data, error } = await this.supabase
-      .from('medication_reminders')
-      .update(updateData)
-      .eq('id', action.reminder_id)
-      .eq('user_id', userId)
+      .from('medication_logs')
+      .insert({
+        reminder_id: reminderId,
+        patient_id: userId,
+        scheduled_time: action.scheduled_time,
+        status: action.action,
+        taken_at: action.action === 'taken' ? (action.taken_at || new Date().toISOString()) : null,
+        skipped_reason: action.skipped_reason || null,
+      })
       .select()
       .single();
 
-    if (error || !data) {
-      throw new BadRequestError('Failed to record action');
+    if (error) {
+      throw new BadRequestError('Failed to record medication action');
     }
 
     return data;
@@ -763,9 +716,9 @@ class HealthRecordsService {
    */
   async addAllergy(userId: string, input: CreateAllergyInput): Promise<Allergy> {
     const { data, error } = await this.supabase
-      .from('allergies')
+      .from('patient_allergies')
       .insert({
-        user_id: userId,
+        patient_id: userId,
         ...input,
         is_active: true,
       })
@@ -784,9 +737,9 @@ class HealthRecordsService {
    */
   async listAllergies(userId: string, familyMemberId?: string): Promise<Allergy[]> {
     let query = this.supabase
-      .from('allergies')
+      .from('patient_allergies')
       .select('*')
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .eq('is_active', true)
       .order('allergen');
 
@@ -810,10 +763,10 @@ class HealthRecordsService {
    */
   async removeAllergy(allergyId: string, userId: string): Promise<void> {
     await this.supabase
-      .from('allergies')
+      .from('patient_allergies')
       .update({ is_active: false })
       .eq('id', allergyId)
-      .eq('user_id', userId);
+      .eq('patient_id', userId);
   }
 
   // ============================================================================
@@ -850,7 +803,7 @@ class HealthRecordsService {
       this.getActiveMedications(userId),
       this.listAllergies(userId),
       this.listMedicalConditions(userId),
-      this.listDocuments({ user_id: userId, limit: 5 }),
+      this.listDocuments({ patient_id: userId, limit: 5 }),
       this.getUpcomingReminders(userId),
     ]);
 
@@ -860,7 +813,7 @@ class HealthRecordsService {
       latest_vitals: latestVitals,
       active_medications: medications,
       allergies,
-      chronic_conditions: conditions.filter((c) => c.condition_type === 'chronic'),
+      chronic_conditions: conditions.filter((c) => c.status === 'chronic'),
       recent_documents: documents.documents,
       upcoming_reminders: reminders,
     };
@@ -901,9 +854,9 @@ class HealthRecordsService {
     familyMemberId?: string
   ): Promise<MedicalCondition[]> {
     let query = this.supabase
-      .from('medical_conditions')
+      .from('patient_medical_conditions')
       .select('*')
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .eq('is_active', true)
       .order('condition_name');
 
@@ -929,10 +882,10 @@ class HealthRecordsService {
   /** Get single vital record */
   async getVitalRecord(vitalId: string, userId: string): Promise<VitalRecord> {
     const { data, error } = await this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .select('*')
       .eq('id', vitalId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .single();
 
     if (error || !data) {
@@ -945,10 +898,10 @@ class HealthRecordsService {
   /** Delete vital record */
   async deleteVitalRecord(vitalId: string, userId: string): Promise<void> {
     const { error } = await this.supabase
-      .from('vital_records')
+      .from('patient_vitals')
       .delete()
       .eq('id', vitalId)
-      .eq('user_id', userId);
+      .eq('patient_id', userId);
 
     if (error) {
       throw new BadRequestError('Failed to delete vital record');
@@ -956,17 +909,17 @@ class HealthRecordsService {
   }
 
   /** Alias for addMedication */
-  async createMedication(userId: string, input: any): Promise<MedicationWithReminders> {
+  async createMedication(userId: string, input: CreateMedicationInput): Promise<Medication> {
     return this.addMedication(userId, input);
   }
 
   /** Get single medication */
   async getMedication(medicationId: string, userId: string): Promise<Medication> {
     const { data, error } = await this.supabase
-      .from('medications')
+      .from('patient_medications')
       .select('*')
       .eq('id', medicationId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .single();
 
     if (error || !data) {
@@ -977,13 +930,13 @@ class HealthRecordsService {
   }
 
   /** List medications with pagination */
-  async listMedications(filters: any): Promise<{ medications: Medication[]; total: number; page: number; limit: number }> {
-    const { user_id, family_member_id, is_active, page = 1, limit = 20 } = filters;
+  async listMedications(filters: MedicationFilters): Promise<{ medications: Medication[]; total: number; page: number; limit: number }> {
+    const { patient_id, family_member_id, is_active, page = 1, limit = 20 } = filters;
 
     let query = this.supabase
-      .from('medications')
+      .from('patient_medications')
       .select('*', { count: 'exact' })
-      .eq('user_id', user_id);
+      .eq('patient_id', patient_id!);
 
     if (family_member_id) query = query.eq('family_member_id', family_member_id);
     if (is_active !== undefined) query = query.eq('is_active', is_active);
@@ -1016,34 +969,41 @@ class HealthRecordsService {
   async recordMedicationAction(
     medicationId: string,
     userId: string,
-    action: { action: string; scheduled_time: string; taken_at?: string; notes?: string }
+    action: { action: string; scheduled_time: string; taken_at?: string; skipped_reason?: string; notes?: string }
   ): Promise<any> {
-    // Update medication last_taken if action is taken
-    if (action.action === 'taken') {
-      await this.supabase
-        .from('medication_reminders')
-        .update({
-          last_taken: action.taken_at || new Date().toISOString(),
-        })
-        .eq('id', medicationId)
-        .eq('user_id', userId);
+    // Insert into medication_logs
+    const { data, error } = await this.supabase
+      .from('medication_logs')
+      .insert({
+        reminder_id: medicationId,
+        patient_id: userId,
+        scheduled_time: action.scheduled_time,
+        status: action.action,
+        taken_at: action.action === 'taken' ? (action.taken_at || new Date().toISOString()) : null,
+        skipped_reason: action.skipped_reason || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new BadRequestError('Failed to record medication action');
     }
 
-    return { success: true, action: action.action };
+    return data;
   }
 
   /** Alias for addAllergy */
-  async createAllergy(userId: string, input: any): Promise<Allergy> {
+  async createAllergy(userId: string, input: CreateAllergyInput): Promise<Allergy> {
     return this.addAllergy(userId, input);
   }
 
   /** Get single allergy */
   async getAllergy(allergyId: string, userId: string): Promise<Allergy> {
     const { data, error } = await this.supabase
-      .from('allergies')
+      .from('patient_allergies')
       .select('*')
       .eq('id', allergyId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .single();
 
     if (error || !data) {
@@ -1054,15 +1014,15 @@ class HealthRecordsService {
   }
 
   /** Update allergy */
-  async updateAllergy(allergyId: string, userId: string, input: any): Promise<Allergy> {
+  async updateAllergy(allergyId: string, userId: string, input: UpdateAllergyInput): Promise<Allergy> {
     const { data, error } = await this.supabase
-      .from('allergies')
+      .from('patient_allergies')
       .update({
         ...input,
         updated_at: new Date().toISOString(),
       })
       .eq('id', allergyId)
-      .eq('user_id', userId)
+      .eq('patient_id', userId)
       .select()
       .single();
 

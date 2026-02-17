@@ -2,25 +2,8 @@ import { logger } from '../../config/logger.js';
 import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../../common/errors/index.js';
 import { formatToIST } from '../../common/utils/date.js';
-import type { QueueAppointment, QueueResponse, WalkInBookingInput, PatientSearchResult } from './reception.types.js';
-
-interface PrescriptionResponse {
-    consultation: any;
-    prescription: any;
-    appointment: any;
-    doctor: any;
-    patient: any;
-    hospital: any;
-}
-
-interface PrescriptionResponse {
-    consultation: any;
-    prescription: any;
-    appointment: any;
-    doctor: any;
-    patient: any;
-    hospital: any;
-}
+import { sanitizeSearchInput } from '../../common/utils/sanitize.js';
+import type { QueueAppointment, QueueResponse, WalkInBookingInput, PatientSearchResult, PrescriptionResponse } from './reception.types.js';
 
 /**
  * Reception Service - Business logic for reception desk operations
@@ -242,10 +225,18 @@ class ReceptionService {
             .insert({
                 appointment_id: appointmentId,
                 payer_user_id: existing.patient_id,
-                amount: paymentDetails.amount,
+                total_amount: paymentDetails.amount,
+                base_amount: paymentDetails.amount,
+                platform_fee: 0,
+                gst_amount: 0,
+                discount_amount: 0,
+                platform_commission: 0,
+                commission_rate: 0,
+                net_payable: paymentDetails.amount,
+                total_refunded: 0,
                 payment_method: paymentDetails.method,
                 payment_type: 'consultation',
-                status: 'captured',
+                status: 'completed',
                 currency: 'INR',
                 cash_collected_by: receptionUserId,
                 cash_collected_at: new Date().toISOString(),
@@ -462,10 +453,18 @@ class ReceptionService {
             .insert({
                 appointment_id: appointment.id,
                 payer_user_id: patientId,
-                amount: input.consultationFee,
+                total_amount: input.consultationFee,
+                base_amount: input.consultationFee,
+                platform_fee: 0,
+                gst_amount: 0,
+                discount_amount: 0,
+                platform_commission: 0,
+                commission_rate: 0,
+                net_payable: input.consultationFee,
+                total_refunded: 0,
                 payment_method: 'cash',
                 payment_type: 'consultation',
-                status: 'captured',
+                status: 'completed',
                 currency: 'INR',
                 cash_collected_by: receptionUserId,
                 cash_collected_at: new Date().toISOString(),
@@ -504,7 +503,7 @@ class ReceptionService {
         )
       `)
             .eq('role', 'patient')
-            .or(`phone.ilike.%${query}%,name.ilike.%${query}%`)
+            .or(`phone.ilike.%${sanitizeSearchInput(query)}%,name.ilike.%${sanitizeSearchInput(query)}%`)
             .limit(limit);
 
         if (error) {
@@ -618,15 +617,23 @@ class ReceptionService {
             .insert({
                 appointment_id: appointmentId,
                 payer_user_id: appointment.patient_id,
-                amount,
+                total_amount: amount,
+                base_amount: amount,
+                platform_fee: 0,
+                gst_amount: 0,
+                discount_amount: 0,
+                platform_commission: 0,
+                commission_rate: 0,
+                net_payable: amount,
+                total_refunded: 0,
                 payment_method: 'cash',
                 payment_type: 'consultation',
-                status: 'captured',
+                status: 'completed',
                 currency: 'INR',
                 cash_collected_by: receptionUserId,
                 cash_collected_at: new Date().toISOString(),
                 completed_at: new Date().toISOString(),
-                receipt_number: receiptNumber,
+                cash_receipt_number: receiptNumber,
             })
             .select()
             .single();
@@ -699,6 +706,7 @@ class ReceptionService {
         return {
             id: data.id,
             appointmentNumber: data.appointment_number,
+            walkInToken: data.walk_in_token || null,
             patient: {
                 id: data.patient?.id || '',
                 name: data.patient?.name || 'Unknown',
@@ -743,7 +751,7 @@ class ReceptionService {
                     name,
                     phone,
                     gender,
-                    dob
+                    date_of_birth
                 ),
                 hospital:hospital_id (
                     id,
@@ -809,6 +817,122 @@ class ReceptionService {
             hospital: appointment.hospital,
             consultation,
             prescription: prescription || null
+        };
+    }
+
+    // =========================================================================
+    // I6: Cash Payment Verification & Reconciliation
+    // =========================================================================
+
+    /**
+     * Supervisor verifies a cash payment recorded by reception staff.
+     * Sets verified_by and verified_at on the payment record.
+     */
+    async verifyCashPayment(paymentId: string, hospitalId: string, supervisorUserId: string): Promise<any> {
+        // Fetch payment and verify it belongs to the hospital
+        const { data: payment, error } = await this.supabase
+            .from('payments')
+            .select('id, appointment_id, payment_method, status, cash_verified_by, appointments!inner(hospital_id)')
+            .eq('id', paymentId)
+            .single();
+
+        if (error || !payment) {
+            throw new NotFoundError('Payment not found');
+        }
+
+        if ((payment as any).appointments?.hospital_id !== hospitalId) {
+            throw new ForbiddenError('Payment does not belong to your hospital');
+        }
+
+        if (payment.payment_method !== 'cash') {
+            throw new BadRequestError('Only cash payments require verification');
+        }
+
+        if ((payment as any).cash_verified_by) {
+            throw new BadRequestError('Payment already verified');
+        }
+
+        // Mark as supervisor-verified
+        const { data: updated, error: updateErr } = await this.supabase
+            .from('payments')
+            .update({
+                cash_verified_by: supervisorUserId,
+                cash_verified_at: new Date().toISOString(),
+            })
+            .eq('id', paymentId)
+            .select()
+            .single();
+
+        if (updateErr) {
+            this.log.error('Failed to verify cash payment', { error: updateErr });
+            throw new BadRequestError('Failed to verify cash payment');
+        }
+
+        return updated;
+    }
+
+    /**
+     * End-of-day cash reconciliation summary for a hospital.
+     * Returns total cash collected, verified vs unverified breakdown, per-staff totals.
+     */
+    async getCashReconciliation(hospitalId: string, date: string): Promise<any> {
+        // Get all cash payments for the hospital on the given date
+        const dayStart = `${date}T00:00:00.000Z`;
+        const dayEnd = `${date}T23:59:59.999Z`;
+
+        const { data: payments, error } = await this.supabase
+            .from('payments')
+            .select('id, total_amount, cash_collected_by, cash_collected_at, cash_verified_by, cash_verified_at, cash_receipt_number, status, appointments!inner(hospital_id)')
+            .eq('payment_method', 'cash')
+            .eq('appointments.hospital_id', hospitalId)
+            .gte('cash_collected_at', dayStart)
+            .lte('cash_collected_at', dayEnd)
+            .order('cash_collected_at', { ascending: true });
+
+        if (error) {
+            this.log.error('Failed to fetch cash reconciliation', { error });
+            throw new BadRequestError('Failed to fetch reconciliation data');
+        }
+
+        const cashPayments = payments || [];
+        const totalCollected = cashPayments.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
+        const verified = cashPayments.filter((p: any) => p.cash_verified_by);
+        const unverified = cashPayments.filter((p: any) => !p.cash_verified_by);
+
+        // Per-staff summary
+        const staffTotals: Record<string, { count: number; total: number; verifiedCount: number }> = {};
+        for (const p of cashPayments) {
+            const staffId = p.cash_collected_by || 'unknown';
+            if (!staffTotals[staffId]) {
+                staffTotals[staffId] = { count: 0, total: 0, verifiedCount: 0 };
+            }
+            staffTotals[staffId].count++;
+            staffTotals[staffId].total += p.total_amount || 0;
+            if (p.cash_verified_by) staffTotals[staffId].verifiedCount++;
+        }
+
+        return {
+            date,
+            hospitalId,
+            summary: {
+                totalPayments: cashPayments.length,
+                totalCollected,
+                verifiedCount: verified.length,
+                verifiedAmount: verified.reduce((s: number, p: any) => s + (p.total_amount || 0), 0),
+                unverifiedCount: unverified.length,
+                unverifiedAmount: unverified.reduce((s: number, p: any) => s + (p.total_amount || 0), 0),
+            },
+            staffBreakdown: staffTotals,
+            payments: cashPayments.map((p: any) => ({
+                id: p.id,
+                amount: p.total_amount,
+                receiptNumber: p.cash_receipt_number,
+                collectedBy: p.cash_collected_by,
+                collectedAt: p.cash_collected_at,
+                verifiedBy: p.cash_verified_by,
+                verifiedAt: p.cash_verified_at,
+                status: p.status,
+            })),
         };
     }
 }
