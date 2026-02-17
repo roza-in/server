@@ -16,7 +16,7 @@ import { initFeatureFlags } from './config/feature-flags.js';
  */
 const startServer = async () => {
   try {
-    // 1. Initialize Sentry (must be first for error tracking)
+    // 1. Initialize Sentry
     initSentry();
 
     // 2. Initialize Redis (for rate limiting, caching)
