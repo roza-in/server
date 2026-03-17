@@ -10,9 +10,45 @@ export class PrescriptionRepository extends BaseRepository<Prescription> {
         return this.findOne({ consultation_id: consultationId } as any);
     }
 
+    override async findMany(filters: Record<string, any> = {}, page = 1, limit = 20): Promise<{ data: any[]; total: number }> {
+        const offset = (page - 1) * limit;
+        let query = this.getQuery().select(`
+            *,
+            patient:users!prescriptions_patient_id_fkey(id, name),
+            doctor:doctors(id, users:users!doctors_user_id_fkey(name))
+        `, { count: 'exact' });
+
+        // Apply filters
+        if (filters.patient_id) query = query.eq('patient_id', filters.patient_id);
+        if (filters.doctor_id) query = query.eq('doctor_id', filters.doctor_id);
+        if (filters.hospital_id) query = query.eq('hospital_id', filters.hospital_id);
+
+        const { data, error, count } = await query
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+
+        if (error) {
+            this.log.error(`Error in PrescriptionRepository.findMany:`, error);
+            throw error;
+        }
+
+        return { data: data || [], total: count || 0 };
+    }
+
     async findByIdWithRelations(id: string): Promise<any | null> {
         const { data, error } = await this.getQuery()
-            .select('*, doctors(users!doctors_user_id_fkey(name)), consultation:consultations(*, appointment:appointments(*)), hospitals(*)')
+            .select(`
+                *,
+                doctor:doctors(
+                    id,
+                    registration_number,
+                    specialization:specializations!doctors_specialization_id_fkey(name),
+                    users:users!doctors_user_id_fkey(name)
+                ),
+                patient:users!prescriptions_patient_id_fkey(id, name),
+                hospital:hospitals(*),
+                consultation:consultations(*, appointment:appointments(*))
+            `)
             .eq('id', id)
             .single();
 

@@ -149,6 +149,65 @@ export const createReturnSchema = z.object({
 });
 
 // ============================================================================
+// Medicine CRUD (Pharmacy / Admin)
+// ============================================================================
+
+export const createMedicineSchema = z.object({
+    body: z.object({
+        name: z.string().min(2).max(255),
+        generic_name: z.string().max(255).optional(),
+        sku: z.string().min(2).max(50),
+        brand: z.string().max(255).optional(),
+        manufacturer: z.string().max(255).optional(),
+        category: z.string().optional(),
+        schedule: z.enum(['otc', 'schedule_h', 'schedule_h1', 'schedule_x', 'ayurvedic', 'homeopathic']).optional(),
+        composition: z.string().max(1000).optional(),
+        strength: z.string().max(100).optional(),
+        pack_size: z.string().max(100).optional(),
+        mrp: z.number().min(0),
+        selling_price: z.number().min(0),
+        discount_percent: z.number().min(0).max(100).optional(),
+        prescription_required: z.boolean().optional().default(false),
+        stock_quantity: z.number().int().min(0).default(0),
+        description: z.string().max(5000).optional(),
+        image_url: z.string().url().optional(),
+        hsn_code: z.string().max(20).optional(),
+        gst_percent: z.number().min(0).max(100).optional(),
+    }),
+});
+
+export const updateMedicineSchema = z.object({
+    params: z.object({
+        id: z.string().uuid(),
+    }),
+    body: z.object({
+        name: z.string().min(2).max(255).optional(),
+        generic_name: z.string().max(255).optional(),
+        brand: z.string().max(255).optional(),
+        manufacturer: z.string().max(255).optional(),
+        category: z.string().optional(),
+        schedule: z.enum(['otc', 'schedule_h', 'schedule_h1', 'schedule_x', 'ayurvedic', 'homeopathic']).optional(),
+        composition: z.string().max(1000).optional(),
+        strength: z.string().max(100).optional(),
+        pack_size: z.string().max(100).optional(),
+        mrp: z.number().min(0).optional(),
+        selling_price: z.number().min(0).optional(),
+        discount_percent: z.number().min(0).max(100).optional(),
+        prescription_required: z.boolean().optional(),
+        stock_quantity: z.number().int().min(0).optional(),
+        description: z.string().max(5000).optional(),
+        image_url: z.string().url().optional(),
+        is_active: z.boolean().optional(),
+    }),
+});
+
+export const deleteMedicineSchema = z.object({
+    params: z.object({
+        id: z.string().uuid(),
+    }),
+});
+
+// ============================================================================
 // Exported Inferred Types
 // ============================================================================
 
@@ -160,3 +219,5 @@ export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 export type ListOrdersInput = z.infer<typeof listOrdersSchema>;
 export type CreateOrderFromPrescriptionInput = z.infer<typeof createOrderFromPrescriptionSchema>;
 export type CreateReturnInput = z.infer<typeof createReturnSchema>;
+export type CreateMedicineInput = z.infer<typeof createMedicineSchema>['body'];
+export type UpdateMedicineInput = z.infer<typeof updateMedicineSchema>['body'];

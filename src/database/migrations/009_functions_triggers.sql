@@ -752,9 +752,6 @@ CREATE TRIGGER tr_medication_reminders_updated_at BEFORE UPDATE ON medication_re
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER tr_health_documents_updated_at BEFORE UPDATE ON health_documents
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
--- updated_at triggers for new tables from 008
-CREATE TRIGGER tr_hosp_verif_requests_updated_at BEFORE UPDATE ON hospital_verification_requests
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER tr_scheduled_reports_updated_at BEFORE UPDATE ON scheduled_reports
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER tr_hospital_announcements_updated_at BEFORE UPDATE ON hospital_announcements

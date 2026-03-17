@@ -99,7 +99,7 @@ router.post(
 router.get(
     '/hospital/:hospitalId',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital'),
     validate(listOrdersSchema),
     getHospitalOrders,
 );
@@ -112,7 +112,7 @@ router.get(
 router.post(
     '/:id/confirm',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital'),
     validate(confirmOrderSchema),
     confirmOrder,
 );
@@ -125,7 +125,7 @@ router.post(
 router.patch(
     '/:id/status',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital'),
     validate(updateOrderStatusSchema),
     updateOrderStatus,
 );
@@ -146,7 +146,7 @@ router.get('/stats', authMiddleware, getOrderStats);
  * @desc    Get hospital medicine order statistics
  * @access  Admin / Hospital Admin
  */
-router.get('/hospital/:hospitalId/stats', authMiddleware, roleGuard('admin', 'hospital_admin'), getOrderStats);
+router.get('/hospital/:hospitalId/stats', authMiddleware, roleGuard('admin', 'hospital'), getOrderStats);
 
 export const orderRoutes = router;
 export default router;

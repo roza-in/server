@@ -17,6 +17,9 @@ import {
   listHospitalPaymentsSchema,
   addStaffSchema,
   removeStaffSchema,
+  updateStaffSchema,
+  updatePayoutAccountSchema,
+  updateFacilitiesSchema,
 } from './hospital.validator.js';
 import {
   updateHospital,
@@ -35,8 +38,12 @@ import {
   updateDoctorSettings,
   addHospitalStaff,
   listHospitalStaff,
+  updateHospitalStaff,
   removeHospitalStaff,
   getHospitalDashboard,
+  getPayoutSettings,
+  updatePayoutSettings,
+  updateFacilities,
 } from './hospital.controller.js';
 import {
   createAnnouncement,
@@ -249,6 +256,53 @@ router.delete(
   roleGuard('hospital', 'admin'),
   validate(removeStaffSchema),
   removeHospitalStaff
+);
+
+/**
+ * @route PUT /api/v1/hospitals/:hospitalId/staff/:staffId
+ * @desc Update staff details
+ * @access Private (hospital admin)
+ */
+router.put(
+  '/:hospitalId/staff/:staffId',
+  roleGuard('hospital', 'admin'),
+  validate(updateStaffSchema),
+  updateHospitalStaff
+);
+
+/**
+ * @route GET /api/v1/hospitals/:hospitalId/payout-settings
+ * @desc Get payout settings (Bank Details)
+ * @access Private (hospital admin)
+ */
+router.get(
+  '/:hospitalId/payout-settings',
+  roleGuard('hospital', 'admin'),
+  getPayoutSettings
+);
+
+/**
+ * @route PUT /api/v1/hospitals/:hospitalId/payout-settings
+ * @desc Update payout settings (Bank Details)
+ * @access Private (hospital admin)
+ */
+router.put(
+  '/:hospitalId/payout-settings',
+  roleGuard('hospital', 'admin'),
+  validate(updatePayoutAccountSchema),
+  updatePayoutSettings
+);
+
+/**
+ * @route PUT /api/v1/hospitals/:hospitalId/facilities
+ * @desc Update hospital facilities
+ * @access Private (hospital admin)
+ */
+router.put(
+  '/:hospitalId/facilities',
+  roleGuard('hospital', 'admin'),
+  validate(updateFacilitiesSchema),
+  updateFacilities
 );
 
 /**

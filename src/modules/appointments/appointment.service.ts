@@ -3,7 +3,7 @@ import { formatToIST, formatAppointmentDate } from '../../common/utils/date.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
 import { NotificationPurpose } from '../../integrations/notification/notification.types.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
-import { PLATFORM_FEES, APPOINTMENT_DURATIONS } from '../../config/constants.js';
+import { APPOINTMENT_DURATIONS } from '../../config/constants.js';
 import { APPOINTMENT_TRANSITIONS } from './appointment.types.js';
 import { appointmentRepository } from '../../database/repositories/appointment.repo.js';
 import { doctorRepository } from '../../database/repositories/doctor.repo.js';
@@ -12,6 +12,7 @@ import { familyMemberRepository } from '../../database/repositories/family-membe
 import { userRepository } from '../../database/repositories/user.repo.js';
 import { appointmentPolicy } from './appointment.policy.js';
 import { paymentService } from '../payments/payment.service.js';
+import { platformConfigService } from '../platform-config/platform-config.service.js';
 import { supabaseAdmin } from '../../database/supabase-admin.js';
 import type { AppointmentStatus, ConsultationType } from '../../types/database.types.js';
 import type { CreateOrderResponse } from '../payments/payment.types.js';
@@ -109,13 +110,15 @@ class AppointmentService {
     }
 
     // Calculate fees
+    const hospitalIdToBook = hospitalId || doctor.hospital_id;
     const consultationFee = this.getConsultationFee(doctor, consultationType);
-    // User Update: No platform fee charged to patient
-    const platformFee = 0;
-    const totalAmount = consultationFee;
+    const commissionRate = await platformConfigService.getCommissionRate(hospitalIdToBook);
+    const platformFee = Math.round(consultationFee * (commissionRate / 100));
+    const gstRate = await platformConfigService.getGSTRate();
+    const gstAmount = Math.round(platformFee * (gstRate / 100));
+    const totalAmount = consultationFee + platformFee + gstAmount;
 
     // C6 Fix: Use atomic RPC to prevent double-booking race conditions
-    const hospitalIdToBook = hospitalId || doctor.hospital_id;
     const mappedType = this.mapConsultationType(consultationType);
 
     const { data: appointmentId, error: rpcError } = await supabaseAdmin.rpc('book_appointment_atomic', {
@@ -602,10 +605,13 @@ class AppointmentService {
       throw new NotFoundError('Doctor');
     }
 
+    const targetHospitalId = hospitalId || doctor.hospital_id;
     const consultationFee = this.getConsultationFee(doctor, consultationType);
-    const platformFee = 0; // STRICT: No platform fee
-    const gstAmount = 0; // STRICT: No GST
-    const totalAmount = consultationFee;
+    const commissionRate = await platformConfigService.getCommissionRate(targetHospitalId);
+    const platformFee = Math.round(consultationFee * (commissionRate / 100));
+    const gstRate = await platformConfigService.getGSTRate();
+    const gstAmount = Math.round(platformFee * (gstRate / 100));
+    const totalAmount = consultationFee + platformFee + gstAmount;
 
     return {
       consultationFee,
@@ -679,6 +685,14 @@ class AppointmentService {
         title: doctorData.title,
         profilePictureUrl: doctorData.users?.avatar_url || null,
         specialization: doctorData.specializations?.name || null,
+        specialization_name: doctorData.specializations?.name || null,
+        qualifications: doctorData.qualifications || [],
+        experienceYears: doctorData.experience_years || 0,
+        // Compatibility with code expecting nested users
+        users: {
+          name: doctorData.users?.name || null,
+          avatar_url: doctorData.users?.avatar_url || null,
+        }
       } : undefined,
 
       hospital: hospitalData || undefined,
@@ -706,8 +720,10 @@ class AppointmentService {
           finalAmount: paymentData.total_amount || data.total_amount || 0,
           status: paymentData.status,
           paidAt: paymentData.paid_at,
+          method: paymentData.payment_method,
         };
       })(),
+      isFollowUp: data.is_follow_up || false,
     };
   }
 

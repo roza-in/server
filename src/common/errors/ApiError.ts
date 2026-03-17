@@ -41,7 +41,7 @@ export class ForbiddenError extends ApiError {
 
 export class NotFoundError extends ApiError {
     constructor(resource: string = 'Resource') {
-        super(`${resource} not found`, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND', true);
+        super(resource.endsWith('not found') ? resource : `${resource} not found`, HTTP_STATUS.NOT_FOUND, 'NOT_FOUND', true);
     }
 }
 

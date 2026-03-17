@@ -282,29 +282,7 @@ CREATE INDEX idx_recon_status ON reconciliation_records(status);
 CREATE INDEX idx_recon_gateway ON reconciliation_records(gateway_provider, gateway_transaction_id);
 CREATE INDEX idx_recon_payment ON reconciliation_records(internal_payment_id) WHERE internal_payment_id IS NOT NULL;
 
--- ======================== COMMISSION SLABS ========================
-
-CREATE TABLE commission_slabs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-  name VARCHAR(100) NOT NULL,
-  description TEXT,
-
-  -- Slab range
-  min_monthly_revenue DECIMAL(14,2) NOT NULL DEFAULT 0,
-  max_monthly_revenue DECIMAL(14,2),  -- NULL = unlimited
-
-  -- Rates
-  consultation_commission_percent DECIMAL(5,2) NOT NULL,
-  medicine_commission_percent DECIMAL(5,2) NOT NULL,
-
-  is_active BOOLEAN DEFAULT true,
-
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_commission_slabs_active ON commission_slabs(is_active) WHERE is_active = true;
+-- (Moved commission_slabs to Migration 003)
 
 -- ======================== DAILY SETTLEMENT SUMMARY ========================
 

@@ -281,6 +281,58 @@ export const listHospitalStaff = asyncHandler(async (req: Request, res: Response
   return sendSuccess(res, staff);
 });
 
+
+/**
+ * Get payout settings
+ * GET /api/v1/hospitals/:hospitalId/payout-settings
+ */
+export const getPayoutSettings = asyncHandler(async (req: Request, res: Response) => {
+  const { hospitalId } = req.params;
+  const user = (req as AuthenticatedRequest).user;
+
+  const settings = await hospitalService.getPayoutSettings(hospitalId, user.userId);
+  return sendSuccess(res, settings);
+});
+
+/**
+ * Update payout settings
+ * PUT /api/v1/hospitals/:hospitalId/payout-settings
+ */
+export const updatePayoutSettings = asyncHandler(async (req: Request, res: Response) => {
+  const { hospitalId } = req.params;
+  const user = (req as AuthenticatedRequest).user;
+  const data = req.body;
+
+  const updated = await hospitalService.updatePayoutSettings(hospitalId, user.userId, data);
+  return sendSuccess(res, updated, MESSAGES.UPDATED);
+});
+
+/**
+ * Update facilities
+ * PUT /api/v1/hospitals/:hospitalId/facilities
+ */
+export const updateFacilities = asyncHandler(async (req: Request, res: Response) => {
+  const { hospitalId } = req.params;
+  const user = (req as AuthenticatedRequest).user;
+  const { facilities } = req.body;
+
+  const updated = await hospitalService.updateFacilities(hospitalId, user.userId, facilities);
+  return sendSuccess(res, updated, MESSAGES.UPDATED);
+});
+
+/**
+ * Update hospital staff member
+ * PUT /api/v1/hospitals/:hospitalId/staff/:staffId
+ */
+export const updateHospitalStaff = asyncHandler(async (req: Request, res: Response) => {
+  const { hospitalId, staffId } = req.params;
+  const user = (req as AuthenticatedRequest).user;
+  const data = req.body;
+
+  const result = await hospitalService.updateStaff(hospitalId, staffId, data);
+  return sendSuccess(res, result, 'Staff member updated successfully');
+});
+
 /**
  * Remove staff from hospital
  * DELETE /api/v1/hospitals/:hospitalId/staff/:staffId

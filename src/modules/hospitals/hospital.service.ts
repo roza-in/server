@@ -134,7 +134,7 @@ class HospitalService {
       'meta_title', 'meta_description', 'meta_keywords',
       'og_image_url', 'canonical_slug', 'noindex',
       'social_links', 'faq_content',
-      'platform_commission_percent', 'medicine_commission_percent',
+      'platform_commission_percent', 'medicine_commission_percent', 'commission_slab_id',
     ];
 
     for (const field of directFields) {
@@ -374,7 +374,7 @@ class HospitalService {
    * Add reception staff to hospital
    * Creates user with reception role and links to hospital_staff
    */
-  async addStaff(hospitalId: string, userId: string, data: { name: string; phone: string; email?: string }): Promise<any> {
+  async addStaff(hospitalId: string, userId: string, data: { name: string; phone: string; email: string; password?: string }): Promise<any> {
     // Verify hospital ownership
     const hospital = await hospitalRepository.findById(hospitalId);
     if (!hospital) throw new NotFoundError('Hospital not found');
@@ -388,17 +388,15 @@ class HospitalService {
       throw new ConflictError('A user with this phone number already exists');
     }
 
-    // Generate default password: name@123
-    const firstName = data.name.split(' ')[0].toLowerCase();
-    const defaultPassword = `${firstName}@123`;
-    const passwordHash = await bcrypt.hash(defaultPassword, this.saltRounds);
+    // Password handling: Use provided password
+    const passwordHash = await bcrypt.hash(data.password, this.saltRounds);
 
     try {
       // Create user with reception role
       const newUser = await userRepository.create({
         name: data.name,
         phone: data.phone,
-        email: data.email || null,
+        email: data.email,
         password_hash: passwordHash,
         role: 'reception',
         is_active: true,
@@ -418,13 +416,45 @@ class HospitalService {
         phone: newUser.phone,
         email: newUser.email,
         role: 'reception',
-        defaultPassword,
+        defaultPassword: data.password,
         message: 'Staff added successfully. Share the login credentials with the staff member.',
       };
     } catch (error) {
       this.log.error('Failed to add staff', error);
       throw new BadRequestError('Failed to add staff member');
     }
+  }
+
+  /**
+   * Update hospital staff member
+   */
+  async updateStaff(hospitalId: string, staffId: string, data: { name?: string; phone?: string; email?: string; password?: string }): Promise<any> {
+    const isLinked = await hospitalRepository.isStaffLinked(hospitalId, staffId);
+    if (!isLinked) {
+      throw new BadRequestError('Staff member does not belong to this hospital');
+    }
+
+    const updates: any = {};
+    if (data.name) updates.name = data.name;
+    if (data.phone) updates.phone = data.phone;
+    if (data.email) updates.email = data.email;
+    if (data.password) {
+      updates.password_hash = await bcrypt.hash(data.password, this.saltRounds);
+    }
+    updates.updated_at = new Date().toISOString();
+
+    const updatedUser = await userRepository.update(staffId, updates);
+    if (!updatedUser) {
+      throw new BadRequestError('Failed to update staff member');
+    }
+
+    return {
+      id: updatedUser.id,
+      name: updatedUser.name,
+      phone: updatedUser.phone,
+      email: updatedUser.email,
+      message: 'Staff member updated successfully',
+    };
   }
 
   /**
@@ -469,6 +499,67 @@ class HospitalService {
     } catch (error) {
       this.log.error('Failed to remove staff', error);
       throw new BadRequestError('Failed to remove staff member');
+    }
+  }
+  /**
+   * Get payout settings (Bank Details)
+   */
+  async getPayoutSettings(hospitalId: string, userId: string): Promise<any> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('Access denied');
+    }
+
+    const account = await hospitalRepository.getPayoutAccount(hospitalId);
+    return account || { message: 'No payout account linked' };
+  }
+
+  /**
+   * Update payout settings (Bank Details)
+   * Note: In a real scenario, this should verify with the gateway or use a secure flow.
+   */
+  async updatePayoutSettings(hospitalId: string, userId: string, data: any): Promise<any> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('Access denied');
+    }
+
+    // For MVP, we update the payout_accounts table directly.
+    // In production, this should trigger a KYC flow with the payment gateway.
+    try {
+      return await hospitalRepository.updatePayoutAccount(hospitalId, {
+        account_holder_name: data.account_holder_name,
+        bank_name: data.bank_name,
+        account_number_masked: data.account_number ? `XXXX${data.account_number.slice(-4)}` : undefined,
+        ifsc_code: data.ifsc_code,
+        // Mock gateway fields for MVP
+        gateway_provider: 'razorpay',
+        gateway_account_id: `acc_${Math.random().toString(36).substring(7)}`,
+        is_active: true,
+      });
+    } catch (error) {
+      this.log.error('Failed to update payout settings', error);
+      throw new BadRequestError('Failed to update payout settings');
+    }
+  }
+
+  /**
+   * Update hospital facilities
+   */
+  async updateFacilities(hospitalId: string, userId: string, facilities: string[]): Promise<any> {
+    const hospital = await hospitalRepository.findById(hospitalId);
+    if (!hospital) throw new NotFoundError('Hospital not found');
+    if (hospital.admin_user_id !== userId) {
+      throw new ForbiddenError('Access denied');
+    }
+
+    try {
+      return await hospitalRepository.updateFacilities(hospitalId, facilities);
+    } catch (error) {
+      this.log.error('Failed to update facilities', error);
+      throw new BadRequestError('Failed to update facilities');
     }
   }
 }

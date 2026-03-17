@@ -150,6 +150,30 @@ INSERT INTO specializations (name, slug, description, display_order, is_active) 
   ('Acupuncturist',            'acupuncturist',            'Traditional Chinese needle therapy for pain and chronic conditions',  67,  true)
 ON CONFLICT (name) DO NOTHING;
 
+-- ======================== COMMISSION SLABS ========================
+
+CREATE TABLE commission_slabs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+
+  -- Slab range
+  min_monthly_revenue DECIMAL(14,2) NOT NULL DEFAULT 0,
+  max_monthly_revenue DECIMAL(14,2),  -- NULL = unlimited
+
+  -- Rates
+  consultation_commission_percent DECIMAL(5,2) NOT NULL,
+  medicine_commission_percent DECIMAL(5,2) NOT NULL,
+
+  is_active BOOLEAN DEFAULT true,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_commission_slabs_active ON commission_slabs(is_active) WHERE is_active = true;
+
 -- ======================== HOSPITALS ========================
 
 CREATE TABLE hospitals (
@@ -232,16 +256,25 @@ CREATE TABLE hospitals (
   working_hours JSONB,
 
   -- Commission (admin-controlled)
-  platform_commission_percent DECIMAL(4,2) DEFAULT 8.00
+  -- NULL = Inherit from Slab or Global Config
+  -- Value = Specific Hospital Override
+  platform_commission_percent DECIMAL(4,2) DEFAULT NULL
     CONSTRAINT chk_hospital_platform_commission CHECK (platform_commission_percent BETWEEN 0 AND 100),
-  medicine_commission_percent DECIMAL(4,2) DEFAULT 5.00
+  medicine_commission_percent DECIMAL(4,2) DEFAULT NULL
     CONSTRAINT chk_hospital_medicine_commission CHECK (medicine_commission_percent BETWEEN 0 AND 100),
+  
+  commission_slab_id UUID REFERENCES commission_slabs(id) ON DELETE SET NULL,
 
   -- Verification
   verification_status verification_status DEFAULT 'pending',
   verified_at TIMESTAMPTZ,
   verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
   rejection_reason TEXT,
+  registration_certificate_url TEXT,
+  license_url TEXT,
+  license_number TEXT,
+  gstin_certificate_url TEXT,
+  review_notes TEXT,
 
   -- Status
   is_active BOOLEAN DEFAULT true,
@@ -269,6 +302,8 @@ CREATE INDEX idx_hospitals_rating ON hospitals(rating DESC);
 CREATE INDEX idx_hospitals_search ON hospitals USING GIN(search_vector);
 CREATE INDEX idx_hospitals_slug ON hospitals(slug) WHERE slug IS NOT NULL;
 CREATE INDEX idx_hospitals_geo ON hospitals(latitude, longitude) WHERE latitude IS NOT NULL;
+CREATE INDEX idx_hospitals_commission_slab ON hospitals(commission_slab_id) WHERE commission_slab_id IS NOT NULL;
+CREATE INDEX idx_hospitals_verification_status ON hospitals(verification_status);
 
 -- ======================== HOSPITAL STAFF ========================
 
@@ -385,6 +420,10 @@ CREATE TABLE doctors (
   verified_at TIMESTAMPTZ,
   verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
   rejection_reason TEXT,
+  registration_certificate_url TEXT,
+  license_url TEXT,
+  license_number TEXT,
+  review_notes TEXT,
 
   -- Status
   is_active BOOLEAN DEFAULT true,
@@ -411,6 +450,7 @@ CREATE INDEX idx_doctors_featured ON doctors(featured) WHERE featured = true;
 CREATE INDEX idx_doctors_rating ON doctors(rating DESC);
 CREATE INDEX idx_doctors_search ON doctors USING GIN(search_vector);
 CREATE INDEX idx_doctors_slug ON doctors(slug) WHERE slug IS NOT NULL;
+CREATE INDEX idx_doctors_verification_status ON doctors(verification_status);
 
 -- ======================== DOCTOR SCHEDULES ========================
 
@@ -437,9 +477,9 @@ CREATE TABLE doctor_schedules (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Only one active schedule per (doctor, day, start_time)
+-- Only one active schedule per (doctor, day, start_time, consultation_type)
 CREATE UNIQUE INDEX idx_schedules_unique_active
-  ON doctor_schedules(doctor_id, day_of_week, start_time)
+  ON doctor_schedules(doctor_id, day_of_week, start_time, consultation_type)
   WHERE is_active = true;
 
 CREATE INDEX idx_schedules_doctor ON doctor_schedules(doctor_id);

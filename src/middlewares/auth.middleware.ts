@@ -77,6 +77,7 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
         sessionId: decoded.sessionId,
         hospitalId: decoded.hospitalId,
         doctorId: decoded.doctorId,
+        adminTier: decoded.adminTier,
       };
 
       next();
@@ -121,6 +122,7 @@ export const optionalAuth = async (req: Request, res: Response, next: NextFuncti
         sessionId: decoded.sessionId,
         hospitalId: decoded.hospitalId,
         doctorId: decoded.doctorId,
+        adminTier: decoded.adminTier,
       };
     } catch (error) {
       // Ignore invalid tokens in optional auth

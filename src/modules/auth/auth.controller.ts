@@ -323,6 +323,15 @@ class AuthController {
     clearTokenCookies(res);
     return sendSuccess(res, result, result.message);
   });
+
+  /**
+   * Change password for authenticated user
+   */
+  changePassword = asyncHandler(async (req: Request, res: Response) => {
+    const { currentPassword, newPassword } = req.body;
+    const result = await authService.changePassword((req as any).user!.userId, currentPassword, newPassword);
+    return sendSuccess(res, result, result.message);
+  });
 }
 
 export const authController = new AuthController();

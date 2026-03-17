@@ -9,6 +9,7 @@ export interface TokenPayload extends JwtPayload {
     hospitalId?: string;
     doctorId?: string;
     sessionId?: string;
+    adminTier?: string;
 }
 
 export type TokenType = 'access' | 'refresh';

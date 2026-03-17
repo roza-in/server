@@ -16,10 +16,10 @@ const paginationFields = {
 
 export const listUsersQuerySchema = z.object({
   query: z.object({
-    search: z.string().max(255).optional(),
-    role: z.enum(['patient', 'reception', 'doctor', 'hospital', 'pharmacy', 'admin']).optional(),
-    is_active: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
-    is_blocked: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
+    search: z.preprocess(v => (v === '' ? undefined : v), z.string().max(255).optional()),
+    role: z.preprocess(v => (v === '' ? undefined : v), z.enum(['patient', 'reception', 'doctor', 'hospital', 'pharmacy', 'admin']).optional()),
+    is_active: z.preprocess(v => (v === '' ? undefined : v), z.enum(['true', 'false']).transform(v => v === 'true').optional()),
+    is_blocked: z.preprocess(v => (v === '' ? undefined : v), z.enum(['true', 'false']).transform(v => v === 'true').optional()),
     ...paginationFields,
   }),
 });
@@ -62,17 +62,17 @@ export const trendPeriodSchema = z.object({
 
 export const listHospitalsQuerySchema = z.object({
   query: z.object({
-    search: z.string().max(255).optional(),
-    status: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
-    type: z.enum([
+    search: z.preprocess(v => (v === '' ? undefined : v), z.string().max(255).optional()),
+    status: z.preprocess(v => (v === '' ? undefined : v), z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional()),
+    type: z.preprocess(v => (v === '' ? undefined : v), z.enum([
       'multi_specialty', 'single_specialty', 'nursing_home',
       'clinic', 'diagnostic_center', 'medical_college', 'primary_health',
-    ]).optional(),
-    sortBy: z.enum([
+    ]).optional()),
+    sortBy: z.preprocess(v => (v === '' ? undefined : v), z.enum([
       'name', 'created_at', 'city', 'state', 'verification_status',
       'type', 'is_active', 'email', 'phone', 'doctorCount', 'appointmentCount',
-    ]).default('created_at'),
-    sortOrder: z.enum(['asc', 'desc']).default('desc'),
+    ]).default('created_at')),
+    sortOrder: z.preprocess(v => (v === '' ? undefined : v), z.enum(['asc', 'desc']).default('desc')),
     ...paginationFields,
   }),
 });
@@ -86,6 +86,7 @@ export const verifyHospitalSchema = z.object({
   body: z.object({
     status: z.enum(['verified', 'rejected', 'under_review']),
     remarks: z.string().max(2000).optional(),
+    license_number: z.string().max(100).optional(),
   }),
 });
 
@@ -133,9 +134,9 @@ export const updateHospitalSchema = z.object({
 
 export const listDoctorsQuerySchema = z.object({
   query: z.object({
-    search: z.string().max(255).optional(),
-    status: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
-    hospitalId: z.string().uuid().optional(),
+    search: z.preprocess(v => (v === '' ? undefined : v), z.string().max(255).optional()),
+    status: z.preprocess(v => (v === '' ? undefined : v), z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional()),
+    hospitalId: z.preprocess(v => (v === '' ? undefined : v), z.string().uuid().optional()),
     ...paginationFields,
   }),
 });
@@ -149,6 +150,7 @@ export const verifyDoctorSchema = z.object({
   body: z.object({
     status: z.enum(['verified', 'rejected', 'under_review']),
     remarks: z.string().max(2000).optional(),
+    license_number: z.string().max(100).optional(),
   }),
 });
 
@@ -163,6 +165,24 @@ export const updateDoctorStatusSchema = z.object({
 
 export const auditLogParamsSchema = z.object({
   params: z.object({ id: uuidSchema }),
+});
+
+export const listAuditLogsQuerySchema = z.object({
+  query: z.object({
+    action: z.string().optional(),
+    entityType: z.string().optional(),
+    userId: z.string().uuid().optional(),
+    phiOnly: z.preprocess(v => v === 'true', z.boolean().optional()),
+    adminOnly: z.preprocess(v => v === 'true', z.boolean().optional()),
+    ...paginationFields,
+  }),
+});
+
+export const updateAdminTierSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({
+    tier: z.enum(['super', 'finance', 'security', 'support', 'ops']),
+  }),
 });
 
 // =========================================================================
@@ -196,6 +216,38 @@ export const reportTypeSchema = z.object({
 });
 
 // =========================================================================
+// Pharmacy Users
+// =========================================================================
+
+export const createPharmacyUserSchema = z.object({
+  body: z.object({
+    name: z.string().min(2).max(200),
+    email: z.string().email(),
+    phone: z.string().min(10).max(15),
+    password: z.string().min(6).max(100),
+  }),
+});
+
+export const listPharmacyUsersSchema = z.object({
+  query: z.object({
+    search: z.preprocess(v => (v === '' ? undefined : v), z.string().max(255).optional()),
+    is_active: z.preprocess(v => (v === '' ? undefined : v), z.enum(['true', 'false']).transform(v => v === 'true').optional()),
+    sortBy: z.preprocess(v => (v === '' ? undefined : v), z.enum(['name', 'created_at', 'email']).default('created_at')),
+    sortOrder: z.preprocess(v => (v === '' ? undefined : v), z.enum(['asc', 'desc']).default('desc')),
+    ...paginationFields,
+  }),
+});
+
+export const pharmacyUserParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+});
+
+export const updatePharmacyUserStatusSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({ is_active: z.boolean() }),
+});
+
+// =========================================================================
 // Inferred types
 // =========================================================================
 
@@ -207,5 +259,9 @@ export type UpdateHospitalBody = z.infer<typeof updateHospitalSchema>['body'];
 export type ListDoctorsQuery = z.infer<typeof listDoctorsQuerySchema>['query'];
 export type SettingUpdateBody = z.infer<typeof settingUpdateSchema>['body'];
 export type ReportFilters = z.infer<typeof reportTypeSchema>['query'];
+export type CreatePharmacyUserBody = z.infer<typeof createPharmacyUserSchema>['body'];
+export type ListPharmacyUsersQuery = z.infer<typeof listPharmacyUsersSchema>['query'];
+export type UpdateAdminTierBody = z.infer<typeof updateAdminTierSchema>['body'];
+export type ListAuditLogsQuery = z.infer<typeof listAuditLogsQuerySchema>['query'];
 
 

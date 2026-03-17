@@ -32,10 +32,17 @@ export class HospitalRepository extends BaseRepository<Hospital> {
     }
 
     async findBySlug(slug: string): Promise<Hospital | null> {
-        const { data, error } = await this.getQuery()
-            .select('*')
-            .eq('slug', slug)
-            .single();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(slug) ||
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
+
+        const query = this.getQuery().select('*');
+        if (isUuid) {
+            query.eq('id', slug);
+        } else {
+            query.eq('slug', slug);
+        }
+
+        const { data, error } = await query.single();
 
         if (error) {
             if (error.code === 'PGRST116') return null;
@@ -169,10 +176,18 @@ export class HospitalRepository extends BaseRepository<Hospital> {
     }
 
     async findBySlugWithDoctors(slug: string): Promise<any | null> {
-        const { data, error } = await this.getQuery()
-            .select('*, doctors(*, users!doctors_user_id_fkey(*))')
-            .eq('slug', slug)
-            .single();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(slug) ||
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
+
+        const query = this.getQuery().select('*, doctors(*, users!doctors_user_id_fkey(*))');
+
+        if (isUuid) {
+            query.eq('id', slug);
+        } else {
+            query.eq('slug', slug);
+        }
+
+        const { data, error } = await query.single();
 
         if (error) {
             if (error.code === 'PGRST116') return null;
@@ -182,18 +197,71 @@ export class HospitalRepository extends BaseRepository<Hospital> {
     }
 
     async findPatients(hospitalId: string, filters: any = {}) {
-        // This usually involves joining appointments and users
-        const { data, error, count } = await this.supabase
+        const page = parseInt(filters.page) || 1;
+        const limit = parseInt(filters.limit) || 20;
+
+        // 1. Fetch appointments to gather patient IDs and stats
+        // We order by scheduled_date DESC to easily pick the latest visit
+        const { data: appointments, error: aptError } = await this.supabase
             .from('appointments')
-            .select('patient:patient_id(*)', { count: 'exact' })
-            .eq('hospital_id', hospitalId);
+            .select('patient_id, scheduled_date')
+            .eq('hospital_id', hospitalId)
+            .order('scheduled_date', { ascending: false });
 
-        if (error) throw error;
-        // Deduplicate patients in application logic or use a better query
-        const patients = Array.from(new Set(data?.map(a => JSON.stringify(a.patient))))
-            .map(p => JSON.parse(p));
+        if (aptError) {
+            this.log.error(`Error fetching patient IDs for hospital ${hospitalId}`, aptError);
+            throw aptError;
+        }
 
-        return { patients, total: count || 0 };
+        // 2. Aggregate stats per patient
+        const patientStats = new Map<string, { lastVisit: string, totalVisits: number }>();
+        (appointments || []).forEach(apt => {
+            const existing = patientStats.get(apt.patient_id);
+            if (!existing) {
+                patientStats.set(apt.patient_id, {
+                    lastVisit: apt.scheduled_date,
+                    totalVisits: 1
+                });
+            } else {
+                existing.totalVisits += 1;
+            }
+        });
+
+        const distinctPatientIds = Array.from(patientStats.keys());
+        const total = distinctPatientIds.length;
+
+        // 3. Apply pagination to the distinct IDs
+        const start = (page - 1) * limit;
+        const paginatedIds = distinctPatientIds.slice(start, start + limit);
+
+        if (paginatedIds.length === 0) {
+            return { patients: [], total };
+        }
+
+        // 4. Fetch full user profiles for the paginated subset
+        const { data: users, error: userError } = await this.supabase
+            .from('users')
+            .select('*')
+            .in('id', paginatedIds);
+
+        if (userError) {
+            this.log.error(`Error fetching patient profiles for group ${paginatedIds}`, userError);
+            throw userError;
+        }
+
+        // 5. Build final objects with aggregated stats
+        // Sort back to match the latest-visit order from paginatedIds
+        const patients = paginatedIds.map(id => {
+            const user = users.find(u => u.id === id);
+            const stats = patientStats.get(id);
+            return {
+                ...user,
+                last_visit: stats?.lastVisit,
+                total_visits: stats?.totalVisits
+            };
+        });
+
+        return { patients, total };
     }
 
     async findAppointments(hospitalId: string, filters: any = {}) {
@@ -339,6 +407,100 @@ export class HospitalRepository extends BaseRepository<Hospital> {
             this.log.error(`Error removing staff ${userId} from hospital ${hospitalId}`, error);
             throw error;
         }
+    }
+
+    /**
+     * Check if user is linked to hospital as staff
+     */
+    async isStaffLinked(hospitalId: string, userId: string): Promise<boolean> {
+        const { data, error } = await this.supabase
+            .from('hospital_staff')
+            .select('user_id')
+            .eq('hospital_id', hospitalId)
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (error) {
+            this.log.error(`Error checking staff linkage for ${userId} in ${hospitalId}`, error);
+            return false;
+        }
+        return !!data;
+    }
+    /**
+     * Get payout account details for hospital
+     */
+    async getPayoutAccount(hospitalId: string): Promise<any> {
+        const { data, error } = await this.supabase
+            .from('payout_accounts')
+            .select('*')
+            .eq('hospital_id', hospitalId)
+            .maybeSingle();
+
+        if (error) {
+            this.log.error(`Error fetching payout account for hospital ${hospitalId}`, error);
+            throw error;
+        }
+        return data;
+    }
+
+    /**
+     * Update or create payout account
+     */
+    async updatePayoutAccount(hospitalId: string, data: any): Promise<any> {
+        // Check if account exists
+        const existing = await this.getPayoutAccount(hospitalId);
+
+        let query;
+        if (existing) {
+            query = this.supabase
+                .from('payout_accounts')
+                .update({
+                    ...data,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('hospital_id', hospitalId)
+                .select()
+                .single();
+        } else {
+            query = this.supabase
+                .from('payout_accounts')
+                .insert({
+                    hospital_id: hospitalId,
+                    ...data,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                })
+                .select()
+                .single();
+        }
+
+        const { data: result, error } = await query;
+        if (error) {
+            this.log.error(`Error updating payout account for hospital ${hospitalId}`, error);
+            throw error;
+        }
+        return result;
+    }
+
+    /**
+     * Update hospital facilities
+     */
+    async updateFacilities(hospitalId: string, facilities: string[]): Promise<any> {
+        const { data, error } = await this.supabase
+            .from('hospitals')
+            .update({
+                facilities,
+                updated_at: new Date().toISOString()
+            } as any)
+            .eq('id', hospitalId)
+            .select('facilities')
+            .single();
+
+        if (error) {
+            this.log.error(`Error updating facilities for hospital ${hospitalId}`, error);
+            throw error;
+        }
+        return data;
     }
 }
 

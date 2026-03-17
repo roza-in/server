@@ -18,7 +18,7 @@ router.use(authMiddleware);
  * @desc Get current patient's prescriptions
  * @access Patient
  */
-router.get('/my', roleGuard('patient'), getMyPrescriptions);
+router.get('/my', roleGuard('patient', 'doctor'), getMyPrescriptions);
 
 /**
  * @route GET /api/v1/prescriptions

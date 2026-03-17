@@ -22,6 +22,8 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 
 export type UserRole = 'patient' | 'reception' | 'doctor' | 'hospital' | 'pharmacy' | 'admin';
 
+export type AdminTier = 'super' | 'finance' | 'security' | 'support' | 'ops';
+
 export type Gender = 'male' | 'female' | 'other';
 
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-' | 'unknown';
@@ -209,6 +211,7 @@ export interface User {
   phone: string | null;
   password_hash: string | null;
   role: UserRole;
+  admin_tier: AdminTier | null;
   name: string;
   avatar_url: string | null;
   cover_url: string | null;
@@ -386,6 +389,7 @@ export interface Hospital {
   working_hours: Json | null;
   platform_commission_percent: number;
   medicine_commission_percent: number;
+  commission_slab_id: string | null;
   verification_status: VerificationStatus;
   verified_at: string | null;
   verified_by: string | null;

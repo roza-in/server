@@ -12,6 +12,7 @@ export function formatUserProfile(user: any, hospitalId?: string, doctorId?: str
         email: user.email,
         name: user.name,
         role: user.role,
+        ...(user.role === 'admin' ? { admin_tier: user.admin_tier ?? null } : {}),
         avatarUrl: user.avatar_url ?? null,
         coverUrl: user.cover_url ?? null,
         phoneVerified: user.phone_verified ?? false,

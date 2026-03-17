@@ -832,7 +832,7 @@ class ReceptionService {
         // Fetch payment and verify it belongs to the hospital
         const { data: payment, error } = await this.supabase
             .from('payments')
-            .select('id, appointment_id, payment_method, status, cash_verified_by, appointments!inner(hospital_id)')
+            .select('id, appointment_id, payment_method, status, cash_verified_by, appointments!payments_appointment_id_fkey!inner(hospital_id)')
             .eq('id', paymentId)
             .single();
 
@@ -882,7 +882,7 @@ class ReceptionService {
 
         const { data: payments, error } = await this.supabase
             .from('payments')
-            .select('id, total_amount, cash_collected_by, cash_collected_at, cash_verified_by, cash_verified_at, cash_receipt_number, status, appointments!inner(hospital_id)')
+            .select('id, total_amount, cash_collected_by, cash_collected_at, cash_verified_by, cash_verified_at, cash_receipt_number, status, appointments!payments_appointment_id_fkey!inner(hospital_id)')
             .eq('payment_method', 'cash')
             .eq('appointments.hospital_id', hospitalId)
             .gte('cash_collected_at', dayStart)

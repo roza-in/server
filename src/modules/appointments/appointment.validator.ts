@@ -54,7 +54,7 @@ export const listAppointmentsSchema = z.object({
     paymentStatus: paymentStatusSchema.optional(),
     page: z.string().regex(/^\d+$/).default('1').transform(Number),
     limit: z.string().regex(/^\d+$/).default('20').transform(Number),
-    sortBy: z.enum(['scheduled_date', 'created_at']).default('scheduled_date'),
+    sortBy: z.enum(['scheduled_date', 'created_at', 'appointmentDate', 'appointment_date']).default('scheduled_date'),
     sortOrder: z.enum(['asc', 'desc']).default('desc'),
   }),
 });

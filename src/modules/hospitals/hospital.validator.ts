@@ -50,6 +50,7 @@ export const listHospitalsSchema = z.object({
       'clinic', 'diagnostic_center', 'medical_college', 'primary_health',
     ]).optional(),
     verification_status: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
+    is_active: z.coerce.boolean().optional(),
     emergency_services: z.coerce.boolean().optional(),
     min_rating: z.coerce.number().min(0).max(5).optional(),
     latitude: z.coerce.number().min(-90).max(90).optional(),
@@ -108,8 +109,9 @@ export const updateHospitalBodySchema = z.object({
   social_links: z.record(z.string(), z.string()).optional().nullable(),
   faq_content: z.array(z.record(z.string(), z.unknown())).optional().nullable(),
   // Commission (admin only)
-  platform_commission_percent: z.number().min(0).max(100).optional(),
-  medicine_commission_percent: z.number().min(0).max(100).optional(),
+  platform_commission_percent: z.number().min(0).max(100).optional().nullable(),
+  medicine_commission_percent: z.number().min(0).max(100).optional().nullable(),
+  commission_slab_id: uuidSchema.optional().nullable(),
 });
 
 export const updateHospitalSchema = z.object({
@@ -155,16 +157,67 @@ export const addDoctorToHospitalSchema = z.object({
     hospitalId: uuidSchema,
   }),
   body: z.object({
-    user_id: uuidSchema,
-    specialization_id: uuidSchema,
-    registration_number: z.string().min(3).max(100),
+    // User account creation/linkage
+    user_id: uuidSchema.optional(),
+    userId: uuidSchema.optional(),
+    phone: phoneSchema.optional(),
+    name: z.string().min(1).max(255).optional(),
+    email: emailSchema.optional(),
+
+    // Basic Profile
+    specialization_id: uuidSchema.optional(),
+    specializationId: uuidSchema.optional(),
+    registration_number: z.string().min(3).max(100).optional(),
+    registrationNumber: z.string().min(3).max(100).optional(),
     registration_council: z.string().max(100).optional(),
+    registrationCouncil: z.string().max(100).optional(),
     registration_year: z.number().int().min(1950).max(new Date().getFullYear()).optional(),
-    qualifications: z.array(z.string()).optional(),
-    experience_years: z.number().int().min(0).max(70).default(0),
-    consultation_fee_online: z.number().min(0).max(50000).default(0),
-    consultation_fee_in_person: z.number().min(0).max(50000).default(0),
-    slot_duration_minutes: z.number().int().min(5).max(120).default(15),
+    registrationYear: z.number().int().min(1950).max(new Date().getFullYear()).optional(),
+    qualifications: z.union([z.array(z.string()), z.string()]).optional(),
+    experience_years: z.number().int().min(0).max(70).optional(),
+    experienceYears: z.number().int().min(0).max(70).optional(),
+    bio: z.string().max(2000).optional(),
+    languages: z.array(z.string()).optional(),
+
+    // Professional Details
+    awards: z.union([z.array(z.string()), z.string()]).optional(),
+    publications: z.union([z.array(z.string()), z.string()]).optional(),
+    certifications: z.union([z.array(z.string()), z.string()]).optional(),
+    memberships: z.union([z.array(z.string()), z.string()]).optional(),
+
+    // Fees & Scaling
+    consultation_fee_online: z.number().min(0).max(50000).optional(),
+    consultationFeeOnline: z.number().min(0).max(50000).optional(),
+    consultation_fee_in_person: z.number().min(0).max(50000).optional(),
+    consultationFeeInPerson: z.number().min(0).max(50000).optional(),
+    consultation_fee_walk_in: z.number().min(0).max(50000).optional(),
+    consultationFeeWalkIn: z.number().min(0).max(50000).optional(),
+    follow_up_fee: z.number().min(0).max(50000).optional(),
+    followUpFee: z.number().min(0).max(50000).optional(),
+    follow_up_validity_days: z.number().int().min(1).max(90).optional(),
+    followUpValidityDays: z.number().int().min(1).max(90).optional(),
+
+    // Configuration
+    slot_duration_minutes: z.number().int().min(5).max(120).optional(),
+    slotDurationMinutes: z.number().int().min(5).max(120).optional(),
+    buffer_time_minutes: z.number().int().min(0).max(60).optional(),
+    bufferTimeMinutes: z.number().int().min(0).max(60).optional(),
+    max_patients_per_slot: z.number().int().min(1).max(100).optional(),
+    maxPatientsPerSlot: z.number().int().min(1).max(100).optional(),
+    online_consultation_enabled: z.boolean().optional(),
+    onlineConsultationEnabled: z.boolean().optional(),
+    walk_in_enabled: z.boolean().optional(),
+    walkInEnabled: z.boolean().optional(),
+    profileImageUrl: z.string().url().optional().nullable(),
+  }).refine(data => data.user_id || data.phone || data.userId, {
+    message: "Either user_id or phone is required for doctor identification",
+    path: ["phone"]
+  }).refine(data => data.specialization_id || data.specializationId, {
+    message: "Specialization is required",
+    path: ["specializationId"]
+  }).refine(data => data.registration_number || data.registrationNumber, {
+    message: "Registration number is required",
+    path: ["registrationNumber"]
   }),
 });
 
@@ -232,7 +285,8 @@ export const addStaffSchema = z.object({
   body: z.object({
     name: z.string().min(2).max(100),
     phone: phoneSchema,
-    email: emailSchema.optional(),
+    email: emailSchema,
+    password: z.string().min(6),
   }),
 });
 
@@ -240,6 +294,41 @@ export const removeStaffSchema = z.object({
   params: z.object({
     hospitalId: uuidSchema,
     staffId: uuidSchema,
+  }),
+});
+
+export const updateStaffSchema = z.object({
+  params: z.object({
+    hospitalId: uuidSchema,
+    staffId: uuidSchema,
+  }),
+  body: z.object({
+    name: z.string().min(2).max(100).optional(),
+    phone: phoneSchema.optional(),
+    email: emailSchema.optional(),
+    password: z.string().min(6).optional(),
+  }),
+});
+
+export const updatePayoutAccountSchema = z.object({
+  params: z.object({
+    hospitalId: uuidSchema,
+  }),
+  body: z.object({
+    account_holder_name: z.string().min(3).max(255),
+    account_number: z.string().min(8).max(50),
+    ifsc_code: z.string().length(11),
+    bank_name: z.string().min(3).max(255),
+    pan_number: z.string().length(10).optional().nullable(),
+  }),
+});
+
+export const updateFacilitiesSchema = z.object({
+  params: z.object({
+    hospitalId: uuidSchema,
+  }),
+  body: z.object({
+    facilities: z.array(z.string()),
   }),
 });
 

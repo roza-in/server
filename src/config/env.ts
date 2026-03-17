@@ -99,19 +99,6 @@ const envSchema = z.object({
    COOKIE_DOMAIN: z.string().optional(),
 
    /* =========================
-      OTP
-   ========================== */
-   OTP_EXPIRY_MINUTES: numericString(10),
-   OTP_LENGTH: numericString(6),
-   OTP_MAX_ATTEMPTS: numericString(3),
-
-   /* =========================
-      Rate Limiting
-   ========================== */
-   RATE_LIMIT_WINDOW_MS: numericString(60000),
-   RATE_LIMIT_MAX_REQUESTS: numericString(100),
-
-   /* =========================
       CORS
    ========================== */
    CORS_ORIGIN: z.string().default('http://localhost:3000'),
@@ -122,16 +109,6 @@ const envSchema = z.object({
    ========================== */
    LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
    LOG_FORMAT: z.enum(['dev', 'combined', 'json']).default('dev'),
-
-   /* =========================
-      Platform Fees (%)
-   ========================== */
-   PLATFORM_FEE_ONLINE_PERCENT: numericString(7),
-   PLATFORM_FEE_IN_PERSON_PERCENT: numericString(4),
-   PLATFORM_FEE_WALKIN_PERCENT: numericString(2),
-   PLATFORM_FEE_FOLLOWUP_PERCENT: numericString(3),
-   PLATFORM_FEE_MEDICAL_PERCENT: numericString(5),
-   GST_RATE_PERCENT: numericString(18),
 
    /* =========================
       Payment Gateway

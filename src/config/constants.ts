@@ -4,30 +4,6 @@
  */
 
 // =============================================================================
-// Platform Fee Configuration
-// =============================================================================
-
-export const PLATFORM_FEES = {
-  // Consultation fees (percentage)
-  PERCENTAGE: 7,
-  ONLINE_CONSULTATION: 7,
-  IN_PERSON_PREBOOKED: 4,
-  WALKIN: 2,
-  FOLLOWUP: 3,
-
-  // Fixed fees (in paisa)
-  MINIMUM_FEE: 2000, // ₹20 minimum
-  MAXIMUM_FEE: 50000, // ₹500 maximum
-
-  // Subscription fees
-  HOSPITAL_BASIC_MONTHLY: 0,
-  HOSPITAL_PREMIUM_MONTHLY: 499900, // ₹4,999
-  HOSPITAL_ENTERPRISE_MONTHLY: 999900, // ₹9,999
-} as const;
-
-export const GST_RATE = 18; // 18% GST on platform fees
-
-// =============================================================================
 // Appointment Configuration
 // =============================================================================
 
@@ -60,21 +36,7 @@ export const PAYMENT_CONFIG = {
   MAX_AMOUNT: 10000000, // ₹1,00,000 in paisa
 } as const;
 
-export const REFUND_POLICY = {
-  // Hours before appointment for different refund percentages
-  FULL_REFUND_HOURS: 24,
-  PARTIAL_75_HOURS: 4,
-  PARTIAL_50_HOURS: 1,
-  NO_REFUND_HOURS: 0,
-
-  // Percentages
-  FULL_PERCENT: 100,
-  PARTIAL_75_PERCENT: 75,
-  PARTIAL_50_PERCENT: 50,
-
-  // Credits for cancellation by provider
-  DOCTOR_CANCEL_CREDIT: 5000, // ₹50 in paisa
-} as const;
+// REFUND_POLICY moved to database platform_config
 
 // =============================================================================
 // OTP Configuration

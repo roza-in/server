@@ -15,6 +15,7 @@ import {
   addDoctor,
   getDoctor,
   getDoctorProfile,
+  getMyDoctorProfile,
   updateDoctor,
   updateDoctorStatus,
   listDoctors,
@@ -53,6 +54,20 @@ router.get('/specializations', getSpecializations);
  * @access Private (doctor)
  */
 router.get('/me/stats', authMiddleware, roleGuard('doctor'), validate(doctorStatsSchema), getDoctorStats);
+
+/**
+ * @route GET /api/v1/doctors/me
+ * @desc Get current user's doctor profile
+ * @access Private (doctor)
+ */
+router.get('/me', authMiddleware, roleGuard('doctor'), getMyDoctorProfile);
+
+/**
+ * @route GET /api/v1/doctors/:doctorId/stats
+ * @desc Get doctor statistics using their unique ID
+ * @access Private
+ */
+router.get('/:doctorId/stats', authMiddleware, validate(doctorStatsSchema), getDoctorStats);
 
 /**
  * @route GET /api/v1/doctors/:doctorId

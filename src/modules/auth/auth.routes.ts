@@ -16,7 +16,8 @@ import {
     registerHospitalProfileSchema,
     registerHospitalComplianceSchema,
     registerHospitalAddressSchema,
-    resetPasswordSchema
+    resetPasswordSchema,
+    changePasswordSchema,
 } from './auth.validator.js';
 
 const router = Router();
@@ -68,5 +69,6 @@ router.use(authMiddleware);
 router.post('/logout', authController.logout);
 router.get('/me', authController.getProfile);
 router.put('/profile', validate(updateProfileSchema), authController.updateProfile);
+router.put('/password/change', validate(changePasswordSchema), authController.changePassword);
 
 export default router;

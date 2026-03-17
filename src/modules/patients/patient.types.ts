@@ -5,6 +5,23 @@ export interface PatientDashboardStats {
     completedConsultations: number;
     prescriptions: number;
     healthRecords: number;
+    pendingPayments: number;
+    familyMembersCount: number;
+    activeReminders: number;
+}
+
+export interface PatientVitals {
+    blood_pressure_systolic: number | null;
+    blood_pressure_diastolic: number | null;
+    pulse_rate: number | null;
+    temperature: number | null;
+    weight: number | null;
+    height: number | null;
+    spo2: number | null;
+    blood_sugar_fasting: number | null;
+    blood_sugar_pp: number | null;
+    bmi: number | null;
+    recorded_at: string;
 }
 
 export type ActivityType = 'appointment' | 'prescription' | 'payment' | 'record';
@@ -29,4 +46,5 @@ export interface PatientDashboardData {
     stats: PatientDashboardStats;
     upcomingAppointments: AppointmentListItem[];
     activityTimeline: ActivityTimelineItem[];
+    vitalsSnapshot: PatientVitals | null;
 }

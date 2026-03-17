@@ -9,7 +9,7 @@ import { NotFoundError, BadRequestError, ForbiddenError } from '../../../common/
 import { medicineRepository } from '../../../database/repositories/medicine.repo.js';
 import { medicineOrderRepository } from '../../../database/repositories/medicine-order.repo.js';
 import { prescriptionRepository } from '../../../database/repositories/prescription.repo.js';
-import { PLATFORM_FEES, GST_RATE } from '../../../config/constants.js';
+import { platformConfigService } from '../../platform-config/platform-config.service.js';
 import type {
     Medicine,
     MedicineOrder,
@@ -27,9 +27,7 @@ import type {
 
 const log = logger.child('MedicineService');
 
-// Commission rate for medicine orders (hospital gets this %)
-const MEDICINE_COMMISSION_PERCENT = 5;
-const DELIVERY_BASE_FEE = 40;
+// DELIVERY_BASE_FEE and MEDICINE_COMMISSION_PERCENT now managed by PlatformConfigService
 
 class MedicineService {
     // ============================================================================
@@ -144,7 +142,7 @@ class MedicineService {
         await this.checkStockAvailability(input.items);
 
         // Calculate pricing
-        const pricing = this.calculateOrderPricing(medicines, input.items);
+        const pricing = await this.calculateOrderPricing(medicines, input.items, input.hospitalId);
 
         // Create order — fields aligned to migration 007 medicine_orders table
         const orderData = {
@@ -207,45 +205,58 @@ class MedicineService {
         return order as MedicineOrderWithDetails;
     }
 
-    calculateOrderPricing(
+    async calculateOrderPricing(
         medicines: Medicine[],
         items: { medicineId: string; quantity: number }[],
-    ): OrderPricingBreakdown {
-        // Calculate subtotal from selling prices
+        hospitalId?: string
+    ): Promise<OrderPricingBreakdown> {
+        // Calculate subtotal and commissions from medicine details
         let subtotal = 0;
+        let totalGst = 0;
+        let totalHospitalCommission = 0;
+
+        const [globalMedicineCommRate] = await Promise.all([
+            platformConfigService.getMedicineCommissionRate(hospitalId),
+        ]);
+
         for (const item of items) {
             const medicine = medicines.find(m => m.id === item.medicineId);
             if (medicine) {
                 const unitPrice = medicine.selling_price ?? medicine.mrp;
-                subtotal += unitPrice * item.quantity;
+                const itemSubtotal = unitPrice * item.quantity;
+                subtotal += itemSubtotal;
+
+                // GST on medicine (using its HSN/GST config)
+                const gstRate = Number(medicine.gst_percent || 12);
+                totalGst += Math.round((itemSubtotal * gstRate) / 100);
+
+                // Commission for referring hospital
+                const commRate = medicine.hospital_commission_percent !== null
+                    ? Number(medicine.hospital_commission_percent)
+                    : globalMedicineCommRate;
+                totalHospitalCommission += Math.round((itemSubtotal * commRate) / 100);
             }
         }
 
-        // Discount (could be from coupon)
+        // Delivery fee
+        const deliveryFee = await platformConfigService.getDeliveryFee();
         const discountAmount = 0;
 
-        // Delivery fee
-        const deliveryFee = DELIVERY_BASE_FEE;
-
-        // Commission for hospital
-        const hospitalCommission = Math.round((subtotal * MEDICINE_COMMISSION_PERCENT) / 100);
-
         // Platform commission = subtotal - hospital commission
-        const platformCommission = subtotal - hospitalCommission;
+        const commissionRate = await platformConfigService.getMedicineCommissionRate(hospitalId);
+        const hospitalCommission = Math.round((subtotal * (commissionRate / 100)) * 100) / 100;
+        const platformCommission = Math.round((subtotal - hospitalCommission) * 100) / 100;
 
-        // GST on platform commission
-        const gstAmount = Math.round((platformCommission * GST_RATE) / 100);
-
-        // Total = subtotal + delivery + gst - discount
-        const totalAmount = subtotal + deliveryFee + gstAmount - discountAmount;
+        // Total = subtotal + gst + delivery - discount
+        const totalAmount = subtotal + totalGst + deliveryFee - discountAmount;
 
         return {
             subtotal,
             discountAmount,
             deliveryFee,
-            gstAmount,
+            gstAmount: totalGst,
             totalAmount,
-            hospitalCommission,
+            hospitalCommission: totalHospitalCommission,
             platformCommission,
         };
     }
@@ -655,6 +666,66 @@ class MedicineService {
             platformCommission: stats.platformCommission,
             averageOrderValue: stats.deliveredOrders > 0 ? stats.totalRevenue / stats.deliveredOrders : 0,
         };
+    }
+
+    // ============================================================================
+    // Medicine CRUD (Pharmacy / Admin)
+    // ============================================================================
+
+    async createMedicine(data: any) {
+        const medicine = await medicineRepository.create({
+            ...data,
+            is_active: true,
+            is_in_stock: (data.stock_quantity || 0) > 0,
+        } as any);
+
+        log.info('Medicine created', { id: medicine.id, name: data.name });
+        return medicine;
+    }
+
+    async updateMedicine(id: string, data: any) {
+        const existing = await medicineRepository.findById(id);
+        if (!existing) throw new NotFoundError('Medicine not found');
+
+        // If stock_quantity changed, update is_in_stock
+        if (data.stock_quantity !== undefined) {
+            data.is_in_stock = data.stock_quantity > 0;
+        }
+
+        const updated = await medicineRepository.update(id, {
+            ...data,
+            updated_at: new Date().toISOString(),
+        } as any);
+
+        log.info('Medicine updated', { id });
+        return updated;
+    }
+
+    async deleteMedicine(id: string) {
+        const existing = await medicineRepository.findById(id);
+        if (!existing) throw new NotFoundError('Medicine not found');
+
+        // Soft-delete
+        await medicineRepository.update(id, {
+            is_active: false,
+            updated_at: new Date().toISOString(),
+        } as any);
+
+        log.info('Medicine deactivated', { id });
+    }
+
+    async listAllOrders(filters: {
+        status?: MedicineOrderStatus;
+        page?: number;
+        limit?: number;
+    }) {
+        const { data, total } = await medicineOrderRepository.listOrders({
+            status: filters.status,
+            page: filters.page || 1,
+            limit: filters.limit || 20,
+        });
+
+        return { orders: data, total };
     }
 }
 

@@ -1,12 +1,13 @@
 import { env } from '../../config/env.js';
+import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { logger } from '../../config/logger.js';
 import { getCurrentIST, formatAppointmentDate, formatToIST } from '../../common/utils/date.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
 import { NotificationPurpose } from '../../integrations/notification/notification.types.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
-import { PLATFORM_FEES, GST_RATE } from '../../config/constants.js';
 import { paymentRepository } from '../../database/repositories/payment.repo.js';
 import { appointmentRepository } from '../../database/repositories/appointment.repo.js';
+import { platformConfigService } from '../platform-config/platform-config.service.js';
 import { creditRepository } from '../../database/repositories/credit.repo.js';
 import { refundRepository } from '../../database/repositories/refund.repo.js';
 import { settlementRepository } from '../../database/repositories/settlement.repo.js';
@@ -69,7 +70,7 @@ class PaymentService {
       const isExpired = (now - createdAt) > (30 * 60 * 1000);
 
       if (isExpired) {
-        this.log.info(`Expiring old pending payment: ${existingPayment.id}`, { appointmentId: appointment_id });
+        this.log.info(`Expiring old pending payment: ${existingPayment.id} `, { appointmentId: appointment_id });
         await paymentRepository.update(existingPayment.id, {
           status: 'failed',
           gateway_response: { error: 'Payment expired/timed out' }
@@ -83,7 +84,7 @@ class PaymentService {
 
     // Create Order via Integration
     const amountInPaise = Math.round(Number(appointment.total_amount) * 100);
-    const receipt = `RZX-${appointment.appointment_number}`;
+    const receipt = `RZX - ${appointment.appointment_number} `;
 
     const order = await paymentIntegration.createOrder({
       amount: amountInPaise,
@@ -99,15 +100,18 @@ class PaymentService {
     });
 
     // Calculate fee distribution
-    // Calculate fee distribution
-    const totalAmount = Number(appointment.consultation_fee); // STRICT: Only consultation fee
-    const platformFee = 0; // STRICT: No platform fee
     const consultationFee = Number(appointment.consultation_fee) || 0;
-    const gstAmount = 0; // STRICT: No GST
-    const doctorAmount = consultationFee;
+    const platformFee = Number(appointment.platform_fee) || 0;
+    const gstAmount = Number(appointment.gst_amount) || 0;
+    const totalAmount = Number(appointment.total_amount) || (consultationFee + platformFee + gstAmount);
 
-    // Create payment record with expiry (30 minutes from now)
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString().replace('Z', '+05:30'); // Approximate IST expiry
+    const commissionRate = await platformConfigService.getCommissionRate(appointment.hospital_id);
+    const platformCommission = Math.round(consultationFee * (commissionRate / 100));
+    const doctorAmount = consultationFee - platformCommission;
+
+    // Create payment record with expiry
+    const timeoutMinutes = await platformConfigService.getPaymentTimeout();
+    const expiresAt = new Date(Date.now() + timeoutMinutes * 60 * 1000).toISOString().replace('Z', '+05:30');
 
     const payment = await paymentRepository.create({
       appointment_id: appointment.id,
@@ -129,6 +133,8 @@ class PaymentService {
       gst_amount: gstAmount,
       discount_amount: 0,
 
+      platform_commission: platformCommission,
+      commission_rate: commissionRate,
       net_payable: doctorAmount,
 
       currency: 'INR',
@@ -145,7 +151,7 @@ class PaymentService {
       }
     } as any);
 
-    this.log.info(`Payment order created: ${receipt}`, {
+    this.log.info(`Payment order created: ${receipt} `, {
       appointmentId: appointment.id,
       orderId: order.id,
       provider: order.provider,
@@ -222,7 +228,7 @@ class PaymentService {
       order_id: orderId,
       amount: Number(appointment.total_amount) * 100,
       currency: 'INR',
-      receipt: `RZX-${appointment.appointment_number}`,
+      receipt: `RZX - ${appointment.appointment_number} `,
       key_id: provider === 'razorpay' ? env.RAZORPAY_KEY_ID : undefined,
       notes: {
         appointment_id: appointment.id,
@@ -292,6 +298,9 @@ class PaymentService {
       throw new BadRequestError('Failed to update payment status');
     }
 
+    // 1b. Record Ledger Entries
+    await this.recordLedgerEntries(updatedPayment);
+
     // 2. Update Appointment (if linked)
     if (payment.appointment_id) {
       await appointmentRepository.update(payment.appointment_id, {
@@ -306,7 +315,7 @@ class PaymentService {
       await this.sendConfirmationNotification(payment.appointment_id, Number(payment.total_amount));
     }
 
-    this.log.info(`Payment verified (Manual): ${gateway_payment_id}`, {
+    this.log.info(`Payment verified(Manual): ${gateway_payment_id} `, {
       paymentId: payment.id,
       appointmentId: payment.appointment_id,
     });
@@ -391,7 +400,7 @@ class PaymentService {
       await this.sendConfirmationNotification(payment.appointment_id, Number(payment.total_amount));
     }
 
-    this.log.info(`Cashfree payment verified: ${orderId}`, {
+    this.log.info(`Cashfree payment verified: ${orderId} `, {
       paymentId: payment.id,
       cashfreePaymentId,
       appointmentId: payment.appointment_id,
@@ -404,7 +413,7 @@ class PaymentService {
    * Handle Razorpay webhook
    */
   async handleWebhook(event: RazorpayWebhookEvent, signature: string): Promise<void> {
-    this.log.info(`Razorpay webhook received: ${event.event}`);
+    this.log.info(`Razorpay webhook received: ${event.event} `);
 
     // Delegate to specific handlers
     switch (event.event) {
@@ -418,7 +427,7 @@ class PaymentService {
         await this.handleRefundProcessed(event.payload.refund?.entity);
         break;
       default:
-        this.log.debug(`Unhandled Razorpay webhook event: ${event.event}`);
+        this.log.debug(`Unhandled Razorpay webhook event: ${event.event} `);
     }
   }
 
@@ -612,13 +621,16 @@ class PaymentService {
     if (!payment) return;
     const data = await paymentRepository.findByGatewayPaymentId(payment.id);
     if (data && data.status === 'pending') {
-      await paymentRepository.update(data.id, {
+      const updatedPayment = await paymentRepository.update(data.id, {
         status: 'completed',
         completed_at: getCurrentIST(),
-      } as any);
+      });
 
-      // Also update appointment status
-      if (data.appointment_id) {
+      // 1b. Record Ledger Entries
+      await this.recordLedgerEntries(updatedPayment);
+
+      // Update appointment if linked
+      if (updatedPayment.appointment_id) {
         await appointmentRepository.update(data.appointment_id, {
           status: 'confirmed',
         });
@@ -685,7 +697,7 @@ class PaymentService {
       if (!appointment || !appointment.patient?.phone) return;
 
       const patientName = appointment.patient.name || 'Patient';
-      const doctorName = appointment.doctor?.users?.name ? `Dr. ${appointment.doctor.users.name}` : 'Doctor';
+      const doctorName = appointment.doctor?.users?.name ? `Dr.${appointment.doctor.users.name} ` : 'Doctor';
 
       const timeStr = formatToIST(appointment.scheduled_start);
       // "15 Jan at 10:30 AM" format
@@ -712,6 +724,55 @@ class PaymentService {
       });
     } catch (error) {
       this.log.error('Failed to send confirmation notification', { appointmentId, error });
+    }
+  }
+
+  /**
+   * Record ledger entries for a completed payment
+   */
+  private async recordLedgerEntries(payment: any) {
+    try {
+      const entries = [
+        {
+          reference_type: 'payment',
+          reference_id: payment.id,
+          entry_type: 'debit',
+          account_type: 'patient_payment',
+          amount: Number(payment.total_amount),
+          description: `Payment received for appointment ${payment.appointment_id || 'N/A'}`
+        },
+        {
+          reference_type: 'payment',
+          reference_id: payment.id,
+          entry_type: 'credit',
+          account_type: 'platform_revenue',
+          amount: Number(payment.platform_commission),
+          description: `Platform commission for appointment ${payment.appointment_id || 'N/A'}`
+        },
+        {
+          reference_type: 'payment',
+          reference_id: payment.id,
+          entry_type: 'credit',
+          account_type: 'gst_collected',
+          amount: Number(payment.gst_amount),
+          description: `GST on platform commission for appointment ${payment.appointment_id || 'N/A'}`
+        },
+        {
+          reference_type: 'payment',
+          reference_id: payment.id,
+          entry_type: 'credit',
+          account_type: 'hospital_payable',
+          amount: Number(payment.net_payable),
+          description: `Net payable to hospital ${payment.hospital_id} for appointment ${payment.appointment_id || 'N/A'}`
+        }
+      ];
+
+      const { error } = await supabaseAdmin.from('financial_ledger').insert(entries);
+      if (error) {
+        this.log.error('Failed to record ledger entries', { paymentId: payment.id, error });
+      }
+    } catch (err) {
+      this.log.error('Unexpected error recording ledger entries', err);
     }
   }
 }

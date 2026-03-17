@@ -27,6 +27,10 @@ import {
     getDeliveryTracking,
     createReturn,
     getReturns,
+    createMedicine,
+    updateMedicine,
+    deleteMedicine,
+    listAllOrders,
 } from './medicine.controller.js';
 import {
     searchMedicinesSchema,
@@ -37,6 +41,9 @@ import {
     listOrdersSchema,
     createOrderFromPrescriptionSchema,
     createReturnSchema,
+    createMedicineSchema,
+    updateMedicineSchema,
+    deleteMedicineSchema,
 } from './medicine.validator.js';
 
 const router = Router();
@@ -128,7 +135,7 @@ router.post(
 router.get(
     '/hospital/:hospitalId/orders',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital', 'pharmacy'),
     validate(listOrdersSchema),
     getHospitalOrders,
 );
@@ -141,7 +148,7 @@ router.get(
 router.post(
     '/orders/:id/confirm',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital', 'pharmacy'),
     validate(confirmOrderSchema),
     confirmOrder,
 );
@@ -154,7 +161,7 @@ router.post(
 router.patch(
     '/orders/:id/status',
     authMiddleware,
-    roleGuard('admin', 'hospital_admin'),
+    roleGuard('admin', 'hospital', 'pharmacy'),
     validate(updateOrderStatusSchema),
     updateOrderStatus,
 );
@@ -175,7 +182,7 @@ router.get('/stats', authMiddleware, getOrderStats);
  * @desc    Get hospital medicine order statistics
  * @access  Admin / Hospital Admin
  */
-router.get('/hospital/:hospitalId/stats', authMiddleware, roleGuard('admin', 'hospital_admin'), getOrderStats);
+router.get('/hospital/:hospitalId/stats', authMiddleware, roleGuard('admin', 'hospital'), getOrderStats);
 
 // ============================================================================
 // Prescription → Order Flow
@@ -237,6 +244,62 @@ router.post(
  * @access  Patient/Admin
  */
 router.get('/orders/:id/returns', authMiddleware, getReturns);
+
+// ============================================================================
+// Medicine CRUD — Pharmacy / Admin
+// ============================================================================
+
+/**
+ * @route   POST /manage
+ * @desc    Create new medicine
+ * @access  Pharmacy / Admin
+ */
+router.post(
+    '/manage',
+    authMiddleware,
+    roleGuard('admin', 'pharmacy'),
+    validate(createMedicineSchema),
+    createMedicine,
+);
+
+/**
+ * @route   PUT /manage/:id
+ * @desc    Update medicine
+ * @access  Pharmacy / Admin
+ */
+router.put(
+    '/manage/:id',
+    authMiddleware,
+    roleGuard('admin', 'pharmacy'),
+    validate(updateMedicineSchema),
+    updateMedicine,
+);
+
+/**
+ * @route   DELETE /manage/:id
+ * @desc    Soft-delete (deactivate) medicine
+ * @access  Pharmacy / Admin
+ */
+router.delete(
+    '/manage/:id',
+    authMiddleware,
+    roleGuard('admin', 'pharmacy'),
+    validate(deleteMedicineSchema),
+    deleteMedicine,
+);
+
+/**
+ * @route   GET /all-orders
+ * @desc    List all orders (pharmacy dashboard)
+ * @access  Pharmacy / Admin
+ */
+router.get(
+    '/all-orders',
+    authMiddleware,
+    roleGuard('admin', 'pharmacy'),
+    validate(listOrdersSchema),
+    listAllOrders,
+);
 
 export const medicineRoutes = router;
 export default router;

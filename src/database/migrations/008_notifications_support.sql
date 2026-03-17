@@ -205,7 +205,7 @@ CREATE INDEX idx_audit_action ON audit_logs(action);
 CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_correlation ON audit_logs(correlation_id) WHERE correlation_id IS NOT NULL;
 CREATE INDEX idx_audit_created ON audit_logs(created_at DESC);
-CREATE INDEX idx_audit_phi ON audit_logs(accessed_phi, created_at) WHERE accessed_phi = true;
+CREATE INDEX idx_audit_phi_created ON audit_logs(accessed_phi, created_at DESC) WHERE accessed_phi = true;
 
 -- ======================== SYSTEM LOGS ========================
 
@@ -377,39 +377,6 @@ CREATE INDEX idx_notif_queue_status ON notification_queue(status, scheduled_for)
 CREATE INDEX idx_notif_queue_notification ON notification_queue(notification_id);
 CREATE INDEX idx_notif_queue_retry ON notification_queue(next_attempt_at) WHERE status = 'failed' AND attempts < max_attempts;
 
--- ======================== HOSPITAL VERIFICATION REQUESTS ========================
-
-CREATE TABLE hospital_verification_requests (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-  hospital_id UUID NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
-  requested_by UUID NOT NULL REFERENCES users(id),
-
-  -- Documents
-  registration_certificate_url TEXT,
-  license_url TEXT,
-  gstin_certificate_url TEXT,
-  photos TEXT[],
-  additional_documents JSONB,
-
-  -- Review
-  status verification_status NOT NULL DEFAULT 'pending',
-  reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
-  reviewed_at TIMESTAMPTZ,
-  rejection_reason TEXT,
-  review_notes TEXT,
-
-  -- Resubmission
-  resubmission_count INTEGER DEFAULT 0,
-  previous_request_id UUID REFERENCES hospital_verification_requests(id),
-
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_hosp_verif_hospital ON hospital_verification_requests(hospital_id);
-CREATE INDEX idx_hosp_verif_status ON hospital_verification_requests(status);
-CREATE INDEX idx_hosp_verif_date ON hospital_verification_requests(created_at DESC);
 
 -- ======================== SCHEDULED REPORTS ========================
 

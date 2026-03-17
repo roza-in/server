@@ -112,6 +112,12 @@ export function createApp(): Application {
   // 1. Trust proxy (for rate limiting, load balancers)
   app.set('trust proxy', 1);
 
+  // DEBUG: Log all incoming requests
+  app.use((req, res, next) => {
+    console.log(`[DEBUG_LOGGER] ${req.method} ${req.url}`);
+    next();
+  });
+
   // 2. Security Headers with Helmet
   app.use((helmet as any)({
     // Content Security Policy
@@ -204,10 +210,10 @@ export function createApp(): Application {
   app.use(metricsMiddleware);
 
   // 9. Rate Limiting (Global Application protection)
-  // strict limiter based on env config
+  // windowMs and max are set to triggers for dynamic lookup in middleware
   app.use(rateLimit({
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-    max: env.RATE_LIMIT_MAX_REQUESTS,
+    windowMs: 60000,
+    max: 100,
     message: 'Too many requests from this IP, please try again later.',
     prefix: 'global'
   }));
