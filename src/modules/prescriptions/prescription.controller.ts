@@ -72,7 +72,7 @@ export const getPrescription = asyncHandler(async (req: Request, res: Response) 
     const prescription = await prescriptionService.getById(prescriptionId);
 
     // Authorization check
-    const isDoctor = user.role === 'doctor' && (prescription.doctors?.users?.name !== undefined || prescription.doctor_id === user.doctorId);
+    const isDoctor = user.role === 'doctor' && (prescription.doctor?.users?.name !== undefined || prescription.doctor_id === user.doctorId);
     const isPatient = user.role === 'patient' && prescription.patient_id === user.userId;
     const isAdmin = user.role === 'admin';
     const isHospital = user.role === 'hospital' && prescription.hospital_id === user.hospitalId;
