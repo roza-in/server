@@ -1,6 +1,7 @@
 /**
  * Medicine Routes
  * Express routes for medicine e-commerce
+ * Aligned to migration 007 — centralized ROZX pharmacy model
  */
 
 import { Router } from 'express';
@@ -11,26 +12,31 @@ import { rateLimit } from '../../../middlewares/rate-limit.middleware.js';
 import {
     searchMedicines,
     getMedicineById,
-    searchPharmacies,
-    getPharmacyById,
     createOrder,
     getMyOrders,
     getOrderById,
     getOrderByNumber,
     cancelOrder,
-    getPharmacyOrders,
+    getHospitalOrders,
     confirmOrder,
     updateOrderStatus,
     getOrderStats,
+    mapPrescriptionMedicines,
+    createOrderFromPrescription,
+    getUnorderedPrescriptions,
+    getDeliveryTracking,
+    createReturn,
+    getReturns,
 } from './medicine.controller.js';
 import {
     searchMedicinesSchema,
-    searchPharmaciesSchema,
     createMedicineOrderSchema,
     cancelOrderSchema,
     confirmOrderSchema,
     updateOrderStatusSchema,
     listOrdersSchema,
+    createOrderFromPrescriptionSchema,
+    createReturnSchema,
 } from './medicine.validator.js';
 
 const router = Router();
@@ -43,43 +49,25 @@ const orderRateLimit = rateLimit({
 });
 
 // ============================================================================
-// Public Routes - Medicine Catalog
+// Public Routes — Medicine Catalog
 // ============================================================================
 
 /**
- * @route   GET /medicines
+ * @route   GET /
  * @desc    Search medicines catalog
  * @access  Public
  */
 router.get('/', optionalAuth, validate(searchMedicinesSchema), searchMedicines);
 
 /**
- * @route   GET /medicines/:id
+ * @route   GET /:id
  * @desc    Get medicine by ID
  * @access  Public
  */
 router.get('/:id', optionalAuth, getMedicineById);
 
 // ============================================================================
-// Public Routes - Pharmacy Search
-// ============================================================================
-
-/**
- * @route   GET /pharmacies
- * @desc    Search pharmacies
- * @access  Public
- */
-router.get('/pharmacies', optionalAuth, validate(searchPharmaciesSchema), searchPharmacies);
-
-/**
- * @route   GET /pharmacies/:id
- * @desc    Get pharmacy by ID
- * @access  Public
- */
-router.get('/pharmacies/:id', optionalAuth, getPharmacyById);
-
-// ============================================================================
-// Patient Routes - Orders
+// Patient Routes — Orders
 // ============================================================================
 
 /**
@@ -92,7 +80,7 @@ router.post(
     authMiddleware,
     orderRateLimit,
     validate(createMedicineOrderSchema),
-    createOrder
+    createOrder,
 );
 
 /**
@@ -103,18 +91,18 @@ router.post(
 router.get('/orders', authMiddleware, validate(listOrdersSchema), getMyOrders);
 
 /**
- * @route   GET /orders/:id
- * @desc    Get order by ID
- * @access  Patient/Pharmacy
- */
-router.get('/orders/:id', authMiddleware, getOrderById);
-
-/**
  * @route   GET /orders/number/:orderNumber
  * @desc    Get order by order number
- * @access  Patient/Pharmacy
+ * @access  Patient/Admin
  */
 router.get('/orders/number/:orderNumber', authMiddleware, getOrderByNumber);
+
+/**
+ * @route   GET /orders/:id
+ * @desc    Get order by ID
+ * @access  Patient/Admin
+ */
+router.get('/orders/:id', authMiddleware, getOrderById);
 
 /**
  * @route   POST /orders/:id/cancel
@@ -125,50 +113,50 @@ router.post(
     '/orders/:id/cancel',
     authMiddleware,
     validate(cancelOrderSchema),
-    cancelOrder
+    cancelOrder,
 );
 
 // ============================================================================
-// Pharmacy Routes - Order Management
+// Hospital / Admin Routes — Order Management
 // ============================================================================
 
 /**
- * @route   GET /pharmacy/:pharmacyId/orders
- * @desc    Get pharmacy orders
- * @access  Pharmacy Owner
+ * @route   GET /hospital/:hospitalId/orders
+ * @desc    Get hospital medicine orders
+ * @access  Admin / Hospital Admin
  */
 router.get(
-    '/pharmacy/:pharmacyId/orders',
+    '/hospital/:hospitalId/orders',
     authMiddleware,
-    roleGuard('pharmacy', 'admin'),
+    roleGuard('admin', 'hospital_admin'),
     validate(listOrdersSchema),
-    getPharmacyOrders
+    getHospitalOrders,
 );
 
 /**
  * @route   POST /orders/:id/confirm
- * @desc    Confirm order (pharmacy)
- * @access  Pharmacy Owner
+ * @desc    Confirm order
+ * @access  Admin / Hospital Admin
  */
 router.post(
     '/orders/:id/confirm',
     authMiddleware,
-    roleGuard('pharmacy', 'admin'),
+    roleGuard('admin', 'hospital_admin'),
     validate(confirmOrderSchema),
-    confirmOrder
+    confirmOrder,
 );
 
 /**
  * @route   PATCH /orders/:id/status
  * @desc    Update order status
- * @access  Pharmacy Owner
+ * @access  Admin / Hospital Admin
  */
 router.patch(
     '/orders/:id/status',
     authMiddleware,
-    roleGuard('pharmacy', 'admin'),
+    roleGuard('admin', 'hospital_admin'),
     validate(updateOrderStatusSchema),
-    updateOrderStatus
+    updateOrderStatus,
 );
 
 // ============================================================================
@@ -178,17 +166,77 @@ router.patch(
 /**
  * @route   GET /stats
  * @desc    Get order statistics
- * @access  Patient/Pharmacy
+ * @access  Authenticated
  */
 router.get('/stats', authMiddleware, getOrderStats);
 
 /**
- * @route   GET /pharmacy/:pharmacyId/stats
- * @desc    Get pharmacy statistics
- * @access  Pharmacy Owner
+ * @route   GET /hospital/:hospitalId/stats
+ * @desc    Get hospital medicine order statistics
+ * @access  Admin / Hospital Admin
  */
-router.get('/pharmacy/:pharmacyId/stats', authMiddleware, roleGuard('pharmacy', 'admin'), getOrderStats);
+router.get('/hospital/:hospitalId/stats', authMiddleware, roleGuard('admin', 'hospital_admin'), getOrderStats);
+
+// ============================================================================
+// Prescription → Order Flow
+// ============================================================================
+
+/**
+ * @route   GET /prescriptions/unordered
+ * @desc    Get patient prescriptions that haven't been ordered yet
+ * @access  Patient
+ */
+router.get('/prescriptions/unordered', authMiddleware, getUnorderedPrescriptions);
+
+/**
+ * @route   GET /prescriptions/:prescriptionId/medicines
+ * @desc    Map prescription medications to catalog medicines
+ * @access  Patient
+ */
+router.get('/prescriptions/:prescriptionId/medicines', authMiddleware, mapPrescriptionMedicines);
+
+/**
+ * @route   POST /orders/from-prescription
+ * @desc    Create order directly from a prescription
+ * @access  Patient
+ */
+router.post(
+    '/orders/from-prescription',
+    authMiddleware,
+    orderRateLimit,
+    validate(createOrderFromPrescriptionSchema),
+    createOrderFromPrescription,
+);
+
+// ============================================================================
+// Delivery Tracking & Returns
+// ============================================================================
+
+/**
+ * @route   GET /orders/:id/tracking
+ * @desc    Get delivery tracking events for an order
+ * @access  Patient/Admin
+ */
+router.get('/orders/:id/tracking', authMiddleware, getDeliveryTracking);
+
+/**
+ * @route   POST /orders/:id/return
+ * @desc    Create a return request for a delivered order
+ * @access  Patient
+ */
+router.post(
+    '/orders/:id/return',
+    authMiddleware,
+    validate(createReturnSchema),
+    createReturn,
+);
+
+/**
+ * @route   GET /orders/:id/returns
+ * @desc    Get returns for an order
+ * @access  Patient/Admin
+ */
+router.get('/orders/:id/returns', authMiddleware, getReturns);
 
 export const medicineRoutes = router;
 export default router;
-

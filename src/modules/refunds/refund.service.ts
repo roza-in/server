@@ -1,10 +1,8 @@
-// @ts-nocheck
 import { logger } from '../../config/logger.js';
 import { NotFoundError, BadRequestError } from '../../common/errors/index.js';
 import { refundRepository } from '../../database/repositories/refund.repo.js';
 import { paymentRepository } from '../../database/repositories/payment.repo.js';
-import { paymentService } from '../payments/payment.service.js';
-import type { RefundFilters, RefundListResponse, CreateRefundInput, ProcessRefundInput } from './refund.types.js';
+import type { RefundFilters, CreateRefundInput, ProcessRefundInput, RefundStats } from './refund.types.js';
 
 /**
  * Refund Service - Domain module for refund management
@@ -12,47 +10,35 @@ import type { RefundFilters, RefundListResponse, CreateRefundInput, ProcessRefun
 class RefundService {
     private log = logger.child('RefundService');
 
-    // Refund percentages based on PRD
-    private getRefundPercentage(type: string): number {
-        const map: Record<string, number> = {
-            full: 100,
-            partial_75: 75,
-            partial_50: 50,
-            none: 0,
-            doctor_cancelled: 100,
-            technical_failure: 100,
-        };
-        return map[type] || 0;
-    }
-
     /**
      * Create refund request
      */
-    async create(input: CreateRefundInput, requestedBy: string): Promise<any> {
-        // Get payment
-        const payment = await paymentRepository.findByIdWithRelations(input.payment_id);
+    async create(input: CreateRefundInput, requestedBy: string) {
+        // Get payment to validate
+        const payment = await paymentRepository.findById(input.payment_id);
 
         if (!payment) {
             throw new NotFoundError('Payment not found');
         }
 
-        const percentage = this.getRefundPercentage(input.refund_type);
-        const refundAmount = (payment.amount * percentage) / 100;
-        const platformFeeRefund = (payment.platform_fee * percentage) / 100;
+        if (payment.status !== 'completed') {
+            throw new BadRequestError('Payment is not in a refundable state');
+        }
+
+        if (input.refund_amount > payment.total_amount - payment.total_refunded) {
+            throw new BadRequestError('Refund amount exceeds available refundable amount');
+        }
 
         const refund = await refundRepository.create({
-            payment_id: payment.id,
-            appointment_id: payment.appointment_id,
-            patient_id: payment.patient_id,
-            refund_type: input.refund_type,
-            refund_percentage: percentage,
-            original_amount: payment.amount,
-            refund_amount: refundAmount,
-            platform_fee_refund: platformFeeRefund,
+            payment_id: input.payment_id,
+            refund_amount: input.refund_amount,
             reason: input.reason,
-            cancelled_by: requestedBy,
+            reason_details: input.reason_details || null,
+            cancellation_fee: input.cancellation_fee || 0,
+            policy_applied: input.policy_applied || null,
             status: 'pending',
-            requested_at: new Date().toISOString(),
+            initiated_by: requestedBy,
+            initiated_at: new Date().toISOString(),
         } as any);
 
         return refund;
@@ -61,70 +47,66 @@ class RefundService {
     /**
      * List refunds with filters
      */
-    async list(filters: RefundFilters): Promise<RefundListResponse> {
-        const result = await refundRepository.findMany({
-            payment_id: filters.payment_id,
-            appointment_id: filters.appointmentId,
-            patient_id: filters.patientId,
-            status: filters.status,
-            date_from: filters.startDate,
-            date_to: filters.endDate,
-            limit: filters.limit,
-            offset: filters.page ? (filters.page - 1) * (filters.limit || 20) : 0,
-        });
-
-        const limit = filters.limit || 20;
+    async list(filters: RefundFilters) {
         const page = filters.page || 1;
+        const limit = Math.min(filters.limit || 20, 100);
+
+        const dbFilters: Record<string, any> = {};
+        if (filters.payment_id) dbFilters.payment_id = filters.payment_id;
+        if (filters.status) dbFilters.status = filters.status;
+        if (filters.reason) dbFilters.reason = filters.reason;
+        if (filters.initiated_by) dbFilters.initiated_by = filters.initiated_by;
+
+        const result = await refundRepository.findMany(dbFilters, page, limit);
 
         return {
-            refunds: (result.data || []) as any[],
+            data: result.data || [],
             total: result.total || 0,
             page,
             limit,
-            totalPages: Math.ceil((result.total || 0) / limit),
         };
     }
 
     /**
-     * Get refund by ID
+     * Get refund by ID with relations
      */
-    async getById(refundId: string): Promise<any> {
-        return refundRepository.findByIdWithRelations(refundId);
+    async getById(refundId: string) {
+        const refund = await refundRepository.findByIdWithRelations(refundId);
+        if (!refund) {
+            throw new NotFoundError('Refund not found');
+        }
+        return refund;
     }
 
     /**
      * Process refund (approve/reject) - admin action
      */
-    async process(refundId: string, input: ProcessRefundInput): Promise<any> {
+    async process(refundId: string, input: ProcessRefundInput) {
         const existing = await this.getById(refundId);
 
         if (existing.status !== 'pending') {
             throw new BadRequestError('Refund is not in pending status');
         }
 
-        const update: any = {
+        const update: Record<string, any> = {
             updated_at: new Date().toISOString(),
-            processed_at: new Date().toISOString(),
         };
 
         if (input.action === 'approve') {
-            // In a real scenario, this would interact with a Payment Gateway (e.g., Razorpay)
-            // We can assume validation succeeded and we mark it as completed or call payment service helper if needed.
-            // But here we are just updating DB state.
+            update.status = 'approved';
+            update.approved_at = new Date().toISOString();
 
-            // If we need to trigger Razorpay refund API, we usually do it at "initiation" or here.
-            // Given existing monolithic service did it in `processRefund`, and this method `process` 
-            // seems to be an Admin Approval step.
-            update.status = 'completed'; // Or 'processing' if async
-            update.completed_at = new Date().toISOString();
-
-            // Should validly update Payment status too
-            await paymentRepository.update(existing.payment_id, { status: 'refunded', updated_at: new Date().toISOString() } as any);
-
+            // Update payment's total_refunded
+            await paymentRepository.update(existing.payment_id, {
+                total_refunded: (existing as any).payments?.total_refunded
+                    ? Number((existing as any).payments.total_refunded) + existing.refund_amount
+                    : existing.refund_amount,
+                status: 'refunded',
+                updated_at: new Date().toISOString(),
+            } as any);
         } else {
-            update.status = 'failed';
-            update.failure_reason = input.notes || 'Rejected by admin';
-            update.failed_at = new Date().toISOString();
+            update.status = 'rejected';
+            update.status_reason = input.notes || 'Rejected by admin';
         }
 
         const refund = await refundRepository.update(refundId, update);
@@ -134,7 +116,7 @@ class RefundService {
     /**
      * Get refund stats
      */
-    async getStats(): Promise<any> {
+    async getStats(): Promise<RefundStats> {
         const { pending, completed, totalCount } = await refundRepository.getStats();
 
         const pendingAmount = pending.reduce((s: number, r: any) => s + Number(r.refund_amount), 0);
@@ -151,5 +133,3 @@ class RefundService {
 }
 
 export const refundService = new RefundService();
-
-

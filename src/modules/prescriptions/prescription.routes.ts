@@ -6,9 +6,7 @@ import {
     getPrescription,
     listPrescriptions,
     getMyPrescriptions,
-    signPrescription,
 } from './prescription.controller.js';
-
 import { idempotencyMiddleware } from '../../middlewares/idempotency.middleware.js';
 
 const router = Router();
@@ -20,14 +18,14 @@ router.use(authMiddleware);
  * @desc Get current patient's prescriptions
  * @access Patient
  */
-router.get('/my', getMyPrescriptions);
+router.get('/my', roleGuard('patient'), getMyPrescriptions);
 
 /**
  * @route GET /api/v1/prescriptions
  * @desc List all prescriptions (for doctors/hospitals/admin)
- * @access Doctor, Hospital, Admin
+ * @access Doctor, Hospital, Admin, Patient
  */
-router.get('/', roleGuard('doctor', 'hospital', 'admin'), listPrescriptions);
+router.get('/', listPrescriptions);
 
 /**
  * @route POST /api/v1/prescriptions
@@ -43,14 +41,5 @@ router.post('/', roleGuard('doctor'), idempotencyMiddleware(), createPrescriptio
  */
 router.get('/:prescriptionId', getPrescription);
 
-/**
- * @route POST /api/v1/prescriptions/:prescriptionId/sign
- * @desc Sign prescription
- * @access Doctor
- */
-router.post('/:prescriptionId/sign', roleGuard('doctor'), idempotencyMiddleware(), signPrescription);
-
 export const prescriptionRoutes = router;
-
 export default router;
-

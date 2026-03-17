@@ -14,18 +14,14 @@
         }
     },
     "functions": {
-        "api/index.ts": {
+        "index.ts": {
             "maxDuration": 60
         }
     },
     "rewrites": [
         {
-            "source": "/api/(.*)",
-            "destination": "/api/index"
-        },
-        {
             "source": "/(.*)",
-            "destination": "/api/index"
+            "destination": "/index"
         }
     ],
     "headers": [

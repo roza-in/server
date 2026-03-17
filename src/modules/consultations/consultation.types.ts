@@ -1,43 +1,102 @@
+import type {
+  Consultation,
+  Prescription,
+  ConsultationStatus,
+  ConsultationType,
+} from '../../types/database.types.js';
+
 /**
  * Types for consultations module
+ * All base types imported from database.types.ts
  */
 
-// Consultation status
-export type ConsultationStatus = 'scheduled' | 'waiting' | 'in_progress' | 'completed' | 'cancelled';
+// Re-export for convenience
+export type { ConsultationStatus };
 
-// Consultation record
-export interface Consultation {
-  id: string;
-  appointmentId: string;
-  doctorId: string;
-  patientId: string;
-  roomId: string | null;
-  status: ConsultationStatus;
-  scheduledDuration: number;
-  actualDuration: number | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  doctorNotes: string | null;
-  vitals: any | null;
-  recordingUrl: string | null;
-  createdAt: string;
-  updatedAt: string;
+// ============================================================================
+// Consultation Extended Types
+// ============================================================================
+
+// Consultation with joined relations
+export interface ConsultationWithDetails extends Consultation {
+  appointment?: {
+    id: string;
+    scheduled_date: string;
+    scheduled_start: string;
+    consultation_type: ConsultationType;
+    patient_id: string;
+    doctor_id: string;
+    hospital_id: string;
+    patient?: {
+      id: string;
+      name: string | null;
+      phone: string;
+      email?: string | null;
+      avatar_url?: string | null;
+    };
+    doctor?: {
+      id: string;
+      user_id: string;
+      users?: {
+        name: string | null;
+        avatar_url?: string | null;
+      };
+      specializations?: {
+        name: string;
+      } | null;
+    };
+  };
+  doctor?: {
+    id: string;
+    user_id: string;
+    users?: {
+      name: string | null;
+      avatar_url?: string | null;
+    };
+    specializations?: {
+      name: string;
+    } | null;
+  };
+  patient?: {
+    id: string;
+    name: string | null;
+    phone: string;
+  };
+  prescriptions?: Prescription[];
 }
 
-// Consultation with details
-export interface ConsultationWithDetails extends Consultation {
-  appointment: {
+// Flattened consultation for API responses
+export interface ConsultationResponse {
+  id: string;
+  appointmentId: string;
+  status: ConsultationStatus;
+  roomId: string | null;
+  roomUrl: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  chiefComplaint: string | null;
+  diagnosis: string | null;
+  treatmentPlan: string | null;
+  vitals: any | null;
+  followUpRequired: boolean;
+  followUpNotes: string | null;
+  followUpDays: number | null;
+  createdAt: string;
+  updatedAt: string;
+  // Joined data
+  appointment?: {
     id: string;
     date: string;
     startTime: string;
     consultationType: string;
   };
-  doctor: {
+  doctor?: {
     id: string;
     name: string;
     specialization: string;
   };
-  patient: {
+  patient?: {
     id: string;
     name: string;
     phone: string;
@@ -45,27 +104,11 @@ export interface ConsultationWithDetails extends Consultation {
   prescription?: Prescription;
 }
 
-// Prescription
-export interface Prescription {
-  id: string;
-  consultationId: string;
-  appointmentId: string;
-  doctorId: string;
-  patientId: string;
-  diagnosis: string;
-  chiefComplaints: string | null;
-  clinicalNotes: string | null;
-  medications: Medication[];
-  labTests: string[] | null;
-  advice: string | null;
-  followUpDate: string | null;
-  validUntil: string | null;
-  pdfUrl: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+// ============================================================================
+// Prescription Types (re-exported from DB, with parsed helpers)
+// ============================================================================
 
-// Medication in prescription
+// Medication in prescription (JSON structure)
 export interface Medication {
   name: string;
   dosage: string;
@@ -75,37 +118,15 @@ export interface Medication {
   instructions?: string;
 }
 
-// Start consultation input
-export interface StartConsultationInput {
-  appointmentId: string;
-}
-
-// End consultation input
-export interface EndConsultationInput {
-  consultationId: string;
-  notes?: string;
-}
-
-// Create prescription input
-export interface CreatePrescriptionInput {
-  consultationId: string;
-  appointmentId: string;
-  diagnosis: string;
-  chiefComplaints?: string;
-  clinicalNotes?: string;
-  medications: Medication[];
-  labTests?: string[];
-  advice?: string;
-  followUpDate?: string;
-  validUntil?: string;
-}
+// ============================================================================
+// Video & Filter Types
+// ============================================================================
 
 // Video call token
 export interface VideoCallToken {
   token: string;
   roomId: string;
   expiresAt: string;
-  // Agora SDK fields
   appId?: string;
   uid?: number;
   channelName?: string;
@@ -114,8 +135,9 @@ export interface VideoCallToken {
 
 // Consultation filters
 export interface ConsultationFilters {
-  doctorId?: string;
-  patientId?: string;
+  doctor_id?: string;
+  patient_id?: string;
+  appointment_id?: string;
   status?: ConsultationStatus;
   startDate?: string;
   endDate?: string;

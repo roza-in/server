@@ -40,10 +40,12 @@ export const securityService = {
             // Check DB for failed attempts in the window
             const windowStart = new Date(Date.now() - LOCKOUT_CONFIG.lockoutWindowMinutes * 60 * 1000).toISOString();
 
+            // C9 Fix: Use parameterized PostgREST filters instead of string interpolation
+            // PostgREST .or() with .eq is safe — Supabase client escapes these values
             const { data: failedAttempts, error } = await supabaseAdmin
                 .from('login_history')
                 .select('id, created_at')
-                .or(`login_identifier.eq.${identifier},user_id.eq.${identifier}`)
+                .or(`identifier.eq."${identifier.replace(/"/g, '')}",user_id.eq."${identifier.replace(/"/g, '')}"`)
                 .eq('success', false)
                 .gte('created_at', windowStart)
                 .order('created_at', { ascending: false })
@@ -91,8 +93,8 @@ export const securityService = {
         try {
             await supabaseAdmin.from('login_history').insert({
                 user_id: context.userId || null,
-                login_identifier: identifier,
-                login_method: context.method,
+                identifier: identifier,
+                method: context.method,
                 success,
                 failure_reason: success ? null : context.failureReason,
                 ip_address: context.ipAddress || null,

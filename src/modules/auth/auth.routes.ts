@@ -3,6 +3,7 @@ import { authController } from './auth.controller.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { authLimiter, otpLimiter } from '../../middlewares/rate-limit.middleware.js';
+import { getCsrfToken } from '../../middlewares/csrf.middleware.js';
 import {
     sendOTPSchema,
     verifyOTPSchema,
@@ -14,7 +15,8 @@ import {
     completeUserRegistrationSchema,
     registerHospitalProfileSchema,
     registerHospitalComplianceSchema,
-    registerHospitalAddressSchema
+    registerHospitalAddressSchema,
+    resetPasswordSchema
 } from './auth.validator.js';
 
 const router = Router();
@@ -50,6 +52,13 @@ router.post('/google/complete', authLimiter, authController.completeGoogleAuth);
 
 // Token Management
 router.post('/refresh', validate(refreshTokenSchema), authController.refreshToken);
+
+// CSRF Token (I8) — SPA bootstrap endpoint
+router.get('/csrf-token', getCsrfToken);
+
+// Password Reset (C7 fix)
+router.post('/password/request-reset', authLimiter, authController.requestPasswordReset);
+router.post('/password/reset', authLimiter, validate(resetPasswordSchema), authController.resetPassword);
 
 /**
  * Protected Routes

@@ -2,12 +2,14 @@ import { logger } from '../../config/logger.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
+import { cacheGetOrSet, CacheKeys, CacheTTL } from '../../config/redis.js';
 import type {
   DoctorSchedule,
   ScheduleOverride,
   ConsultationType,
   DayOfWeek,
-  VerificationStatus
+  VerificationStatus,
+  ScheduleOverrideType,
 } from '../../types/database.types.js';
 import type {
   DoctorProfile,
@@ -23,6 +25,7 @@ import type {
   UpdateDoctorInput,
   DoctorListItem
 } from './doctor.types.js';
+import type { UpdateDoctorBody, CreateDoctorInput } from './doctor.validator.js';
 import { doctorRepository } from '../../database/repositories/doctor.repo.js';
 import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
 import { userRepository } from '../../database/repositories/user.repo.js';
@@ -51,7 +54,7 @@ class DoctorService {
   /**
    * Add a new doctor (triggered by hospital)
    */
-  async add(data: Partial<UpdateDoctorInput>, userId: string): Promise<DoctorProfile> {
+  async add(data: CreateDoctorInput, userId: string): Promise<DoctorProfile> {
     const hospital = await hospitalRepository.findByUserId(userId);
     if (!hospital) {
       throw new ForbiddenError('Only hospital administrators can add doctors');
@@ -108,39 +111,38 @@ class DoctorService {
       user_id: doctorUserId,
       hospital_id: hospital.id,
       specialization_id: (data as any).specialization_id || (data as any).specializationId || null,
-      registration_number: (data as any).registrationNumber || (data as any).medicalRegistrationNumber || 'PENDING',
+      registration_number: (data as any).registrationNumber || 'PENDING',
       registration_council: (data as any).registrationCouncil || null,
-      registration_year: (data as any).registrationYear ? Number((data as any).registrationYear) : null,
       qualifications: (data as any).qualifications
         ? (Array.isArray((data as any).qualifications) ? (data as any).qualifications : [(data as any).qualifications])
         : null,
-      experience_years: Number((data as any).experienceYears || (data as any).yearsOfExperience || 0),
+      experience_years: Number((data as any).experienceYears || 0),
       bio: (data as any).bio || null,
-      languages: (data as any).languages_spoken || (data as any).languages || ['English', 'Hindi'],
+      languages: (data as any).languages || ['English', 'Hindi'],
       // Fees
       consultation_fee_online: Number((data as any).consultationFeeOnline || 0),
       consultation_fee_in_person: Number((data as any).consultationFeeInPerson || 0),
       consultation_fee_walk_in: Number((data as any).consultationFeeWalkIn || 0),
-      follow_up_fee: (data as any).followUpFee ? Number((data as any).followUpFee) : null,
+      follow_up_fee: (data as any).followUpFee ? Number((data as any).followUpFee) : 0,
       follow_up_validity_days: Number((data as any).followUpValidityDays || 7),
       // Slot config
       slot_duration_minutes: Number((data as any).slotDurationMinutes || 15),
       buffer_time_minutes: Number((data as any).bufferTimeMinutes || 5),
       max_patients_per_slot: Number((data as any).maxPatientsPerSlot || 1),
       // Consultation types
-      online_consultation_enabled: (data as any).onlineConsultationEnabled === true,
-      walk_in_enabled: (data as any).walkInEnabled !== false, // Default true
+      consultation_types: ['online', 'in_person'] as ConsultationType[],
+      online_consultation_enabled: (data as any).onlineConsultationEnabled !== false,
+      walk_in_enabled: (data as any).walkInEnabled !== false,
       // Image (use og_image_url as that's what exists in schema)
-      og_image_url: (data as any).profileImageUrl || (data as any).profile_image_url || null,
+      og_image_url: (data as any).profileImageUrl || null,
       // Status
-      verification_status: 'pending',
+      verification_status: 'pending' as VerificationStatus,
       is_active: false,
       is_available: true,
     };
 
-    // If specialization name is passed, look up the ID
-    if (!insertData.specialization_id && (data as any).specialization) {
-      // For now, require specialization_id or fail gracefully
+    // Specialization ID is required by the validator
+    if (!insertData.specialization_id) {
       this.log.warn('No specialization_id provided, doctor may fail FK constraint');
     }
 
@@ -192,14 +194,15 @@ class DoctorService {
 
     return {
       id: doctor.id,
-      title: doctor.title || '',
-      name: doctor.user?.name || doctor.users?.name || '',
-      avatar_url: doctor.user?.avatar_url || doctor.users?.avatar_url || (doctor as any).user?.profile_picture_url,
-      specialization: typeof doctor.specialization === 'string' ? doctor.specialization : (doctor.specialization?.name || null),
+      name: (doctor as any).user?.name || (doctor as any).users?.name || '',
+      avatar_url: (doctor as any).user?.avatar_url || (doctor as any).users?.avatar_url || null,
+      specialization: typeof (doctor as any).specialization === 'object'
+        ? (doctor as any).specialization
+        : null,
       qualifications: doctor.qualifications || [],
       experience_years: doctor.experience_years,
       bio: doctor.bio,
-      languages_spoken: (doctor as any).languages || (doctor as any).languages_spoken || [],
+      languages: doctor.languages || [],
 
       // Extended Profile Data
       registration_number: doctor.registration_number,
@@ -209,18 +212,19 @@ class DoctorService {
       publications: doctor.publications || [],
       certifications: doctor.certifications || [],
       memberships: doctor.memberships || [],
-      services: doctor.available_service || [],
+      available_service: doctor.available_service || [],
       social_profiles: doctor.social_profiles,
-      consultation_fee_online: doctor.online_consultation_fee || (doctor as any).consultation_fee_online,
-      consultation_fee_in_person: doctor.consultation_fee || (doctor as any).consultation_fee_in_person,
-      consultation_fee_walk_in: doctor.follow_up_fee || (doctor as any).consultation_fee_walk_in,
-      consultation_duration: doctor.consultation_duration,
-      accepts_online: !!doctor.online_consultation_fee,
-      accepts_in_person: !!doctor.consultation_fee,
-      accepts_walk_in: !!doctor.follow_up_fee,
+      consultation_fee_online: doctor.consultation_fee_online,
+      consultation_fee_in_person: doctor.consultation_fee_in_person,
+      consultation_fee_walk_in: doctor.consultation_fee_walk_in,
+      follow_up_fee: doctor.follow_up_fee,
+      slot_duration_minutes: doctor.slot_duration_minutes,
+      online_consultation_enabled: doctor.online_consultation_enabled,
+      walk_in_enabled: doctor.walk_in_enabled,
+      consultation_types: doctor.consultation_types || [],
       rating: doctor.rating,
       total_ratings: doctor.total_ratings,
-      hospital: doctor.hospital || null,
+      hospital: (doctor as any).hospital || null,
       availability,
     };
   }
@@ -258,7 +262,7 @@ class DoctorService {
 
     // Ownership check
     if (doctor.user_id !== userId && role !== 'admin') {
-      const hospital = await hospitalRepository.findById(doctor.hospital_id!);
+      const hospital = await hospitalRepository.findById(doctor.hospital_id);
       if (!hospital || hospital.admin_user_id !== userId) {
         throw new ForbiddenError('Access denied');
       }
@@ -266,12 +270,12 @@ class DoctorService {
 
     const updateData: any = { updated_at: new Date().toISOString() };
     const fields = [
-      'title', 'specialization_id', 'qualifications', 'experience_years',
-      'bio', 'languages_spoken', 'consultation_fee_online', 'consultation_fee_in_person',
-      'consultation_fee_walk_in', 'consultation_duration', 'accepts_online',
-      'accepts_in_person', 'accepts_walk_in', 'max_patients_per_day',
-      'registration_number', 'registration_council', 'license_number',
-      'signature_url', 'stamp_url'
+      'specialization_id', 'qualifications', 'experience_years',
+      'bio', 'languages', 'consultation_fee_online', 'consultation_fee_in_person',
+      'consultation_fee_walk_in', 'follow_up_fee', 'follow_up_validity_days',
+      'slot_duration_minutes', 'buffer_time_minutes', 'max_patients_per_slot',
+      'online_consultation_enabled', 'walk_in_enabled', 'consultation_types',
+      'is_available', 'registration_number', 'registration_council',
     ];
 
     fields.forEach(f => { if ((data as any)[f] !== undefined) updateData[f] = (data as any)[f]; });
@@ -287,12 +291,12 @@ class DoctorService {
   /**
    * Update doctor status
    */
-  async updateStatus(doctorId: string, userId: string, role: string, status: string): Promise<DoctorProfile> {
+  async updateStatus(doctorId: string, userId: string, role: string, isActive: boolean, reason?: string): Promise<DoctorProfile> {
     const doctor = await doctorRepository.findById(doctorId);
     if (!doctor) throw new NotFoundError('Doctor not found');
 
     if (role === 'hospital') {
-      const hospital = await hospitalRepository.findById(doctor.hospital_id!);
+      const hospital = await hospitalRepository.findById(doctor.hospital_id);
       if (!hospital || hospital.admin_user_id !== userId) throw new ForbiddenError('Access denied');
     } else if (role !== 'admin') {
       throw new ForbiddenError('Access denied');
@@ -300,8 +304,7 @@ class DoctorService {
 
     try {
       await doctorRepository.update(doctorId, {
-        is_active: status === 'active',
-        verification_status: status === 'suspended' ? 'suspended' : doctor.verification_status,
+        is_active: isActive,
         updated_at: new Date().toISOString()
       } as any);
       return await doctorRepository.findWithRelations(doctorId) as DoctorProfile;
@@ -326,14 +329,13 @@ class DoctorService {
 
     return await doctorRepository.upsertSchedule(doctorId, {
       day_of_week: normalizeDayOfWeek(schedule.day_of_week),
+      consultation_type: schedule.consultation_type || 'in_person',
       start_time: schedule.start_time,
       end_time: schedule.end_time,
-      slot_duration: schedule.slot_duration || 15,
-      buffer_time: schedule.buffer_time || 5,
+      slot_duration_minutes: schedule.slot_duration_minutes || 15,
       break_start: schedule.break_start || null,
       break_end: schedule.break_end || null,
-      max_appointments: schedule.max_patients_per_slot || 1,
-      consultation_types: schedule.consultation_types || ['online', 'in_person'],
+      max_patients_per_slot: schedule.max_patients_per_slot || 1,
       is_active: schedule.is_active ?? true,
     });
   }
@@ -357,23 +359,35 @@ class DoctorService {
 
     return await doctorRepository.upsertOverride(doctorId, {
       override_date: override.override_date,
-      is_available: override.is_available,
+      override_type: override.override_type || 'leave',
       reason: override.reason || null,
-      start_time: override.custom_start_time || null,
-      end_time: override.custom_end_time || null,
-      slot_duration: override.custom_slot_duration || null,
+      start_time: override.start_time || null,
+      end_time: override.end_time || null,
     });
   }
 
   /**
-   * Get doctor availability for N days
+   * Get doctor availability for N days — cached for 30s
    */
   async getAvailability(doctorId: string, days: number = 7): Promise<DoctorDayAvailability[]> {
-    const schedules = await doctorRepository.getSchedules(doctorId);
+    return cacheGetOrSet(
+      CacheKeys.doctorAvailability(doctorId),
+      () => this._computeAvailability(doctorId, days),
+      CacheTTL.DOCTOR_AVAILABILITY,
+    );
+  }
+
+  /** Internal: compute availability (uncached) */
+  private async _computeAvailability(doctorId: string, days: number): Promise<DoctorDayAvailability[]> {
     const startDate = new Date().toISOString().split('T')[0];
     const endDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const data = await doctorRepository.getAvailabilityData(doctorId, startDate, endDate);
+    // P1: Fetch schedules, appointments, and overrides in a single parallel batch
+    // instead of schedules first → then availability data sequentially
+    const [schedules, data] = await Promise.all([
+      doctorRepository.getSchedules(doctorId),
+      doctorRepository.getAvailabilityData(doctorId, startDate, endDate),
+    ]);
     const availability: DoctorDayAvailability[] = [];
 
     for (let i = 0; i < days; i++) {
@@ -383,34 +397,39 @@ class DoctorService {
       const dayOfWeek = DAY_NAMES[date.getDay() === 0 ? 6 : date.getDay() - 1];
 
       const override = data.overrides.find((o: any) => o.override_date === dateStr);
-      const schedule = schedules.find((s: any) => s.day_of_week === dayOfWeek && s.is_active);
+      // Get all active schedules for this day (may have multiple consultation types)
+      const daySchedules = schedules.filter((s: any) => s.day_of_week === dayOfWeek && s.is_active);
+      const schedule = daySchedules[0]; // Use first schedule for time boundaries
 
       let isAvailable = false;
       let slots: TimeSlot[] = [];
 
       if (override) {
-        isAvailable = override.is_available;
+        // override_type 'special_hours' means available with custom times; 'holiday'/'leave'/'emergency' means unavailable
+        isAvailable = override.override_type === 'special_hours';
         if (isAvailable && override.start_time && override.end_time) {
+          const consultationTypes = daySchedules.map((s: any) => s.consultation_type).filter(Boolean);
           slots = this.generateSlots(
             override.start_time, override.end_time,
-            override.slot_duration || schedule?.slot_duration || 15,
-            schedule?.consultation_types || ['online', 'in_person'],
+            schedule?.slot_duration_minutes || 15,
+            consultationTypes.length > 0 ? consultationTypes : ['in_person'] as ConsultationType[],
             data.appointments.filter((a: any) => a.scheduled_date === dateStr)
           );
         }
       } else if (schedule) {
         isAvailable = true;
+        const consultationTypes = daySchedules.map((s: any) => s.consultation_type).filter(Boolean);
         slots = this.generateSlots(
-          schedule.start_time, schedule.end_time, schedule.slot_duration,
-          schedule.consultation_types,
+          schedule.start_time, schedule.end_time, schedule.slot_duration_minutes || 15,
+          consultationTypes.length > 0 ? consultationTypes : ['in_person'] as ConsultationType[],
           data.appointments.filter((a: any) => a.scheduled_date === dateStr),
-          schedule.break_start, schedule.break_end, schedule.max_appointments
+          schedule.break_start, schedule.break_end, schedule.max_patients_per_slot || 1
         );
       }
 
       availability.push({
         date: dateStr,
-        day_of_week: date.getDay() as DayOfWeek,
+        day_of_week: dayOfWeek as DayOfWeek,
         is_available: isAvailable,
         slots,
         override: override || undefined
@@ -476,7 +495,7 @@ class DoctorService {
     if (!doctor) throw new NotFoundError('Doctor not found');
 
     if (doctor.user_id !== userId && role !== 'admin') {
-      const hospital = await hospitalRepository.findById(doctor.hospital_id!);
+      const hospital = await hospitalRepository.findById(doctor.hospital_id);
       if (!hospital || hospital.admin_user_id !== userId) throw new ForbiddenError('Access denied');
     }
 

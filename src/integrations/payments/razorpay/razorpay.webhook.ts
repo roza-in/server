@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { env } from '../../../config/env.js';
 import { logger } from '../../../config/logger.js';
+import type { WebhookEvent } from '../payment.types.js';
 
 const log = logger.child('RazorpayWebhook');
 
@@ -48,6 +49,24 @@ export class RazorpayWebhook {
             log.error('Webhook signature verification error', error);
             return false;
         }
+    }
+
+    /**
+     * Parse Razorpay webhook body into a normalized WebhookEvent.
+     *
+     * Razorpay webhook structure:
+     *   { event: "payment.captured", payload: { payment: { entity: {...} } } }
+     */
+    static parseEvent(body: any): WebhookEvent {
+        const entity = body.payload;
+        return {
+            type: body.event || 'unknown',
+            data: {
+                order: entity?.order?.entity,
+                payment: entity?.payment?.entity,
+                refund: entity?.refund?.entity,
+            },
+        };
     }
 }
 

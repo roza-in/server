@@ -1,4 +1,3 @@
-// @ts-nocheck
 import type {
   Doctor,
   DoctorSchedule,
@@ -7,6 +6,7 @@ import type {
   DayOfWeek,
   VerificationStatus,
   Specialization,
+  ScheduleOverrideType,
 } from '../../types/database.types.js';
 
 /**
@@ -19,20 +19,20 @@ import type {
 
 export type DoctorRow = Doctor;
 
-export interface DoctorProfile extends Omit<DoctorRow, 'specialization'> {
+export interface DoctorProfile extends Doctor {
   user?: {
     id: string;
-    name: string | null;
-    phone: string;
+    name: string;
+    phone: string | null;
     email: string | null;
     avatar_url: string | null;
   };
   hospital?: {
     id: string;
     name: string;
-    slug: string;
-    hospital_type: string;
-    address: any;
+    slug: string | null;
+    type: string;
+    address: string | null;
   };
   specialization?: Specialization;
   schedules?: DoctorSchedule[];
@@ -41,20 +41,19 @@ export interface DoctorProfile extends Omit<DoctorRow, 'specialization'> {
 export interface DoctorListItem {
   id: string;
   user_id: string;
-  hospital_id: string | null;
+  hospital_id: string;
   name: string | null;
   avatar_url: string | null;
-  title: string;
-  specialization_id: string | null;
+  specialization_id: string;
   specialization_name?: string;
-  qualifications: any;
+  qualifications: string[] | null;
   experience_years: number;
   consultation_fee_online: number;
   consultation_fee_in_person: number;
-  accepts_online: boolean;
-  accepts_in_person: boolean;
-  accepts_walk_in: boolean;
-  rating: number | null;
+  online_consultation_enabled: boolean;
+  walk_in_enabled: boolean;
+  consultation_types: ConsultationType[];
+  rating: number;
   total_ratings: number;
   total_consultations: number;
   verification_status: VerificationStatus;
@@ -66,44 +65,38 @@ export interface DoctorListItem {
 
 export interface DoctorPublicProfile {
   id: string;
-  title: string;
   name: string;
   avatar_url: string | null;
   specialization: Specialization | null;
-  qualifications: any;
+  qualifications: string[] | null;
   experience_years: number;
   bio: string | null;
-  languages_spoken: string[] | null;
-  registration_number?: string;
-  registration_council?: string;
-  registration_year?: number;
-  awards?: string[];
-  publications?: string[];
-  certifications?: string[];
-  memberships?: string[];
-  services?: string[];
-  social_profiles?: {
-    linkedin?: string;
-    twitter?: string;
-    facebook?: string;
-    instagram?: string;
-    website?: string;
-  };
+  languages: string[];
+  registration_number: string;
+  registration_council: string | null;
+  registration_year: number | null;
+  awards: string[] | null;
+  publications: string[] | null;
+  certifications: string[] | null;
+  memberships: string[] | null;
+  available_service: string[] | null;
+  social_profiles: any;
   consultation_fee_online: number;
   consultation_fee_in_person: number;
-  consultation_fee_walk_in: number | null;
-  consultation_duration: number;
-  accepts_online: boolean;
-  accepts_in_person: boolean;
-  accepts_walk_in: boolean;
-  rating: number | null;
+  consultation_fee_walk_in: number;
+  follow_up_fee: number;
+  slot_duration_minutes: number;
+  online_consultation_enabled: boolean;
+  walk_in_enabled: boolean;
+  consultation_types: ConsultationType[];
+  rating: number;
   total_ratings: number;
   hospital: {
     id: string;
     name: string;
-    slug: string;
+    slug: string | null;
     logo_url: string | null;
-    address: any;
+    address: string | null;
   } | null;
   availability: DoctorDayAvailability[];
 }
@@ -121,7 +114,6 @@ export interface DoctorDayAvailability {
 }
 
 export interface TimeSlot {
-  id?: string;
   start_time: string;
   end_time: string;
   consultation_types: ConsultationType[];
@@ -133,24 +125,22 @@ export interface TimeSlot {
 
 export interface ScheduleInput {
   day_of_week: DayOfWeek;
+  consultation_type: ConsultationType;
   start_time: string;
   end_time: string;
-  slot_duration?: number;
-  buffer_time?: number;
-  break_start?: string;
-  break_end?: string;
+  slot_duration_minutes?: number;
+  break_start?: string | null;
+  break_end?: string | null;
   max_patients_per_slot?: number;
-  consultation_types?: ConsultationType[];
   is_active?: boolean;
 }
 
 export interface ScheduleOverrideInput {
   override_date: string;
-  is_available: boolean;
+  override_type: ScheduleOverrideType;
   reason?: string;
-  custom_start_time?: string;
-  custom_end_time?: string;
-  custom_slot_duration?: number;
+  start_time?: string | null;
+  end_time?: string | null;
 }
 
 // ============================================================================
@@ -169,15 +159,13 @@ export interface DoctorFilters {
   max_fee?: number;
   min_rating?: number;
   available_today?: boolean;
-  accepts_online?: boolean;
-  accepts_in_person?: boolean;
-  accepts_walk_in?: boolean;
   language?: string;
   gender?: string;
   page?: number;
   limit?: number;
   sort_by?: 'name' | 'experience' | 'fee' | 'rating' | 'consultations';
   sort_order?: 'asc' | 'desc';
+  include_unverified?: boolean;
 }
 
 export interface DoctorListResponse {
@@ -203,7 +191,7 @@ export interface DoctorStats {
   totalEarnings: number;
   monthlyEarnings: number;
   pendingPayouts: number;
-  rating: number | null;
+  rating: number;
   totalRatings: number;
   averageConsultationTime: number;
 }
@@ -218,19 +206,14 @@ export interface DoctorDashboard {
 
 export interface UpcomingAppointment {
   id: string;
-  booking_id: string;
+  appointment_number: string;
   patient_name: string;
   patient_avatar: string | null;
-  appointment_date: string;
-  start_time: string;
-  // New schema fields
-  appointment_number?: string;
-  scheduled_date?: string;
-  scheduled_start?: string;
-
+  scheduled_date: string;
+  scheduled_start: string;
   consultation_type: ConsultationType;
   status: string;
-  symptoms?: string;
+  patient_notes?: string;
 }
 
 export interface RecentPatient {
@@ -246,27 +229,29 @@ export interface RecentPatient {
 // ============================================================================
 
 export interface UpdateDoctorInput {
-  title?: string;
   specialization_id?: string;
-  qualifications?: any;
+  qualifications?: string[];
   experience_years?: number;
   bio?: string;
-  languages_spoken?: string[];
+  languages?: string[];
   consultation_fee_online?: number;
   consultation_fee_in_person?: number;
   consultation_fee_walk_in?: number;
-  consultation_duration?: number;
-  accepts_online?: boolean;
-  accepts_in_person?: boolean;
-  accepts_walk_in?: boolean;
-  max_appointments_per_day?: number;
-  signature_url?: string;
-  stamp_url?: string;
+  follow_up_fee?: number;
+  follow_up_validity_days?: number;
+  slot_duration_minutes?: number;
+  buffer_time_minutes?: number;
+  max_patients_per_slot?: number;
+  online_consultation_enabled?: boolean;
+  walk_in_enabled?: boolean;
+  consultation_types?: ConsultationType[];
+  is_available?: boolean;
+  registration_number?: string;
+  registration_council?: string;
 }
 
 export interface UpdateDoctorVerificationInput {
   verification_status: VerificationStatus;
-  verification_notes?: string;
-  verification_documents?: any;
+  rejection_reason?: string;
 }
 

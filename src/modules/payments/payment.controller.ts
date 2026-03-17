@@ -5,7 +5,7 @@ import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
-import type { CreateOrderInput, VerifyPaymentInput, ProcessRefundInput, PaymentFilters, CashfreeCallbackInput } from './payment.types.js';
+import type { CreateOrderInput, VerifyPaymentInput, ProcessRefundInput, PaymentFilters } from './payment.types.js';
 
 /**
  * Payment Controller - Handles HTTP requests for payments
@@ -54,7 +54,7 @@ export const verifyPayment = asyncHandler(async (req: Request, res: Response) =>
  */
 export const verifyCashfreeCallback = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as AuthenticatedRequest).user;
-  const { orderId } = req.body as CashfreeCallbackInput;
+  const { orderId } = req.body as { orderId: string };
 
   if (!orderId) {
     throw new BadRequestError('Order ID is required');
@@ -81,7 +81,7 @@ export const getPaymentStatus = asyncHandler(async (req: Request, res: Response)
   return sendSuccess(res, {
     id: payment.id,
     status: payment.status,
-    paid_at: payment.paid_at,
+    completed_at: payment.completed_at,
   });
 });
 
@@ -160,7 +160,7 @@ export const refundPayment = asyncHandler(async (req: Request, res: Response) =>
  */
 export const getPaymentStats = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as AuthenticatedRequest).user;
-  const { date_from, date_to } = req.query as any;
+  const { date_from, date_to } = req.query as { date_from?: string; date_to?: string };
 
   // Hospital/Doctor can only see their own stats
   const hospitalId = user.role === 'hospital' ? user.hospitalId : undefined;
@@ -185,7 +185,7 @@ export const handleWebhook = asyncHandler(async (req: Request, res: Response) =>
  * POST /api/v1/payments/webhook/cashfree
  */
 export const handleCashfreeWebhook = asyncHandler(async (req: Request, res: Response) => {
-  const signature = req.headers['x-webhook-signature'] as string;
-  await paymentService.handleCashfreeWebhook(req.body, signature);
+  // Signature already verified by cashfreeWebhookAuth middleware
+  await paymentService.handleCashfreeWebhook(req.body);
   return sendSuccess(res, null, 'Webhook processed');
 });

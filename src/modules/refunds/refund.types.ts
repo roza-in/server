@@ -1,60 +1,62 @@
 // ============================================================================
 // Refund Module Types
+// Re-exports canonical Refund from database.types.ts
 // ============================================================================
 
-export type RefundType = 'full' | 'partial_75' | 'partial_50' | 'none' | 'doctor_cancelled' | 'technical_failure';
-export type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed';
+import type { Refund as DBRefund, RefundReason, RefundStatus } from '../../types/database.types.js';
 
-export interface Refund {
-    id: string;
-    payment_id: string;
-    appointment_id: string;
-    patient_id: string;
-    refund_type: RefundType;
-    refund_percentage: number;
-    original_amount: number;
-    refund_amount: number;
-    platform_fee_refund: number;
-    razorpay_refund_id: string | null;
-    status: RefundStatus;
-    reason: string | null;
-    cancelled_by: string | null;
-    requested_at: string;
-    processed_at: string | null;
-    completed_at: string | null;
-    failed_at: string | null;
-    failure_reason: string | null;
-    credit_amount: number | null;
-    created_at: string;
-    updated_at: string;
+/** Canonical Refund type from DB */
+export type Refund = DBRefund;
+
+/** Re-export enums for convenience */
+export type { RefundReason, RefundStatus };
+
+/** Refund with joined relations */
+export interface RefundWithRelations extends Refund {
+    payments?: {
+        id: string;
+        payment_number: string | null;
+        payer_user_id: string;
+        appointment_id: string | null;
+        total_amount: number;
+        base_amount: number;
+        platform_fee: number;
+        payment_method: string;
+        status: string;
+    } | null;
 }
 
+/** Filters for listing refunds */
 export interface RefundFilters {
+    payment_id?: string;
     status?: RefundStatus;
-    patientId?: string;
-    appointmentId?: string;
-    startDate?: string;
-    endDate?: string;
+    reason?: RefundReason;
+    initiated_by?: string;
     page?: number;
     limit?: number;
 }
 
-export interface RefundListResponse {
-    refunds: Refund[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
+/** Input for creating a refund */
+export interface CreateRefundInput {
+    payment_id: string;
+    refund_amount: number;
+    reason: RefundReason;
+    reason_details?: string;
+    cancellation_fee?: number;
+    policy_applied?: string;
 }
 
+/** Input for processing (approve/reject) a refund */
 export interface ProcessRefundInput {
     action: 'approve' | 'reject';
     notes?: string;
 }
 
-export interface CreateRefundInput {
-    payment_id: string;
-    refund_type: RefundType;
-    reason: string;
+/** Refund stats (computed) */
+export interface RefundStats {
+    totalRefunds: number;
+    pendingAmount: number;
+    completedAmount: number;
+    pendingCount: number;
+    completedCount: number;
 }
-

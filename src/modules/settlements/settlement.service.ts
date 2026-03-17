@@ -1,208 +1,214 @@
-// @ts-nocheck
 import { logger } from '../../config/logger.js';
 import { NotFoundError, BadRequestError } from '../../common/errors/index.js';
 import { settlementRepository } from '../../database/repositories/settlement.repo.js';
 import { paymentRepository } from '../../database/repositories/payment.repo.js';
-import type { SettlementFilters, SettlementListResponse, CreateSettlementInput } from './settlement.types.js';
+import type {
+  SettlementFilters,
+  SettlementListResponse,
+  SettlementStatsResponse,
+  CalculateSettlementInput,
+  CompleteSettlementInput,
+  SettlementWithRelations,
+} from './settlement.types.js';
 
 /**
- * Settlement Service - Domain module for hospital payouts
+ * Settlement Service — domain logic for entity payouts (hospitals / pharmacies)
  */
 class SettlementService {
-    private log = logger.child('SettlementService');
+  private log = logger.child('SettlementService');
 
-    /**
-     * List settlements with filters
-     */
-    async list(filters: SettlementFilters): Promise<SettlementListResponse> {
-        const result = await settlementRepository.findMany({
-            hospital_id: filters.hospitalId,
-            status: filters.status,
-            date_from: filters.startDate,
-            date_to: filters.endDate,
-            limit: filters.limit,
-            offset: filters.page ? (filters.page - 1) * (filters.limit || 20) : 0
-        });
+  // --------------------------------------------------------------------------
+  // Queries
+  // --------------------------------------------------------------------------
 
-        const limit = filters.limit || 20;
-        const page = filters.page || 1;
+  /** Paginated list with optional filters (admin) */
+  async list(filters: SettlementFilters): Promise<SettlementListResponse> {
+    return settlementRepository.listSettlements({
+      entityType: filters.entityType,
+      entityId: filters.entityId,
+      status: filters.status,
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+      page: filters.page,
+      limit: filters.limit,
+    });
+  }
 
-        return {
-            settlements: result.data as any[],
-            total: result.total,
-            page,
-            limit,
-            totalPages: Math.ceil((result.total || 0) / limit),
-        };
+  /** Get single settlement with line items + entity */
+  async getById(settlementId: string): Promise<SettlementWithRelations> {
+    const settlement = await settlementRepository.findByIdWithRelations(settlementId);
+    if (!settlement) throw new NotFoundError('Settlement not found');
+    return settlement as SettlementWithRelations;
+  }
+
+  /** Settlements for a specific entity (hospital "my" view) */
+  async getEntitySettlements(
+    entityType: string,
+    entityId: string,
+    page: number,
+    limit: number,
+  ): Promise<SettlementListResponse> {
+    return settlementRepository.findByEntity(entityType, entityId, page, limit);
+  }
+
+  /** Aggregated stats (count + sum per status) */
+  async getStats(filters?: { entityType?: string; entityId?: string }): Promise<SettlementStatsResponse> {
+    const raw = await settlementRepository.getStats(filters);
+
+    const pending = raw['pending'] || { count: 0, amount: 0 };
+    const processing = raw['processing'] || { count: 0, amount: 0 };
+    const completed = raw['completed'] || { count: 0, amount: 0 };
+
+    return {
+      pendingCount: pending.count,
+      pendingAmount: pending.amount,
+      processingCount: processing.count,
+      processingAmount: processing.amount,
+      completedCount: completed.count,
+      completedAmount: completed.amount,
+      totalNetPayable: pending.amount + processing.amount + completed.amount,
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // Commands
+  // --------------------------------------------------------------------------
+
+  /**
+   * Calculate & create a new settlement for the given entity + period.
+   * Pulls completed payments via paymentRepository.getStats and builds line items.
+   */
+  async calculate(input: CalculateSettlementInput) {
+    const { entityType, entityId, periodStart, periodEnd } = input;
+
+    // Guard: no overlapping non-cancelled settlements
+    const existing = await settlementRepository.findOverlapping(entityType, entityId, periodStart, periodEnd);
+    if (existing) {
+      throw new BadRequestError(
+        `Overlapping settlement ${existing.settlement_number || existing.id} already exists for this period`,
+      );
     }
 
-    /**
-     * Get settlement by ID
-     */
-    async getById(settlementId: string): Promise<any> {
-        return settlementRepository.findByIdWithRelations(settlementId);
+    // Fetch completed + refunded payments in the period
+    const { completed: payments, refunded } = await paymentRepository.getStats({
+      hospital_id: entityType === 'hospital' ? entityId : undefined,
+      date_from: periodStart,
+      date_to: periodEnd,
+    });
+
+    const grossAmount = payments.reduce((s, p) => s + Number(p.total_amount || 0), 0);
+    const commissionAmount = payments.reduce((s, p) => s + Number(p.platform_commission || 0), 0);
+    const refundsAmount = refunded.reduce((s, p) => s + Number(p.total_refunded || 0), 0);
+    const tdsAmount = 0; // TDS calculated externally or via config
+    const otherDeductions = 0;
+    const netPayable = grossAmount - commissionAmount - refundsAmount - tdsAmount - otherDeductions;
+
+    const settlementNumber = `SET/${entityType.toUpperCase().slice(0, 3)}/${new Date().getFullYear()}/${Date.now().toString().slice(-6)}`;
+
+    // Create settlement row
+    const settlement = await settlementRepository.create({
+      settlement_number: settlementNumber,
+      entity_type: entityType,
+      entity_id: entityId,
+      period_start: periodStart,
+      period_end: periodEnd,
+      gross_amount: grossAmount,
+      refunds_amount: refundsAmount,
+      commission_amount: commissionAmount,
+      tds_amount: tdsAmount,
+      other_deductions: otherDeductions,
+      deduction_details: null,
+      net_payable: Math.max(netPayable, 0),
+      status: 'pending' as const,
+    } as any);
+
+    // Create line items for each payment
+    if (payments.length > 0) {
+      const lineItems = payments.map((p) => ({
+        settlement_id: settlement.id,
+        transaction_type: 'payment',
+        transaction_id: p.id,
+        transaction_date: p.created_at,
+        gross_amount: Number(p.total_amount || 0),
+        commission_amount: Number(p.platform_commission || 0),
+        net_amount: Number(p.net_payable || 0),
+        description: `Payment ${p.id}`,
+      }));
+
+      await settlementRepository.createLineItems(lineItems);
     }
 
-    /**
-     * Calculate and create settlement for hospital
-     */
-    async calculate(input: CreateSettlementInput): Promise<any> {
-        const { hospital_id, period_start, period_end } = input;
+    // Line items for refunds
+    if (refunded.length > 0) {
+      const refundItems = refunded.map((r) => ({
+        settlement_id: settlement.id,
+        transaction_type: 'refund',
+        transaction_id: r.id,
+        transaction_date: r.created_at,
+        gross_amount: -Number(r.total_refunded || 0),
+        commission_amount: 0,
+        net_amount: -Number(r.total_refunded || 0),
+        description: `Refund for payment ${r.id}`,
+      }));
 
-        // Get completed payments in period using paymentRepository (requires new method or careful 'findMany')
-        // We need a specific query not fully exposed by findMany, let's add a helper or extend findMany
-        // For time being, let's use a "raw-ish" call via repository if needed, BUT we shouldn't.
-        // Actually findMany supports date ranges and hospital_id.
-        // We need status='completed'.
-
-        // However, findMany in PaymentRepository returns paginated list.
-        // We need ALL payments for calculation. 
-        // We should add `findAllForSettlement` to PaymentRepository or use limit=10000.
-        // Let's use a reasonably high limit or better, add a method.
-        // Since I can't edit repo now easily without stepping back, I will use findMany with high limit
-        // as a temporary workaround or assume standard pagination breaks if too big.
-        // Ideally: `paymentRepository.findAllForSettlement(...)`.
-
-        // Re-reading PaymentRepository: `getStats` might help but doesn't return list.
-        // I will use `findMany` with limit 1000 for now.
-
-        const { data: payments } = await paymentRepository.findMany({
-            hospital_id,
-            status: 'completed',
-            date_from: period_start,
-            date_to: period_end,
-            limit: 1000
-        });
-
-        // Note: findMany returns `Payment` objects which have `amount`, `platform_fee`, `hospital_amount`.
-
-        // We also need refunds.
-        // Currently PaymentRepository findMany doesn't join refunds list used for calculation?
-        // Actually refunds are handled separately in logic below.
-
-        const paymentData = payments || [];
-        const totalRevenue = paymentData.reduce((s, p) => s + Number(p.amount || 0), 0);
-        const totalPlatformFees = paymentData.reduce((s, p) => s + Number(p.platform_fee || 0), 0);
-        const netSettlement = paymentData.reduce((s, p) => s + Number(p.hospital_amount || 0), 0);
-
-        // Get refunds in period
-        // RefundRepository needs `findByPaymentIds` or similar.
-        // Or we loop. Or we assume logic is simplified.
-        // The original used `in('payment_id', [ids])`.
-        // Let's assume net settlement should already account for refunds if `hospital_amount` was adjusted?
-        // Usually `hospital_amount` in payment is fixed.
-        // We need to fetch refunds.
-        // Let's rely on `refundRepository` findMany logic if possible or omit complexity if acceptable.
-        // For correctness, I'll loop for now or skip if too complex without new repo method.
-        // Wait, `net_settlement` calculation in original code:
-        // `netSettlement - totalRefunds`.
-        // So we MUST deduct refunds.
-
-        // I will stick to the original logic flow but use repositories where possible.
-        // Since `in` query is not exposed in Repo, I might have to iterate or skip.
-        // Iterating 1000 payments is bad.
-        // I'll skip "total_refunds" calculation accurately for this step OR
-        // accept that I'm refactoring structure primarily.
-        // BETTER: Assume `hospital_amount` on `Payment` updates when refunded? 
-        // If not, I'll set totalRefunds to 0 for this specific refactor pass safely, 
-        // or simplisticlly fetch all refunds in period for hospital?
-        // `RefundRepository` findMany can filter by Date. 
-        // But we need refunds FOR THESE PAYMENTS, not just any refund in that period 
-        // (though usually they correlate).
-        // Let's skip detailed refund fetch for calculation to keep it simple and compile-safe.
-
-        const totalRefunds = 0; // Simplified for refactor
-
-        const invoiceNumber = `SET/${new Date().getFullYear()}/${Date.now().toString().slice(-6)}`;
-
-        // Create settlement
-        const settlement = await settlementRepository.create({
-            hospital_id,
-            settlement_period_start: period_start,
-            settlement_period_end: period_end,
-            total_consultations: paymentData.length,
-            total_revenue: totalRevenue,
-            total_platform_fees: totalPlatformFees,
-            total_gst: 0,
-            total_refunds: totalRefunds,
-            net_settlement: netSettlement - totalRefunds,
-            invoice_number: invoiceNumber,
-            status: 'pending',
-            calculated_at: new Date().toISOString(),
-        } as any);
-
-        // Create line items
-        if (paymentData.length > 0) {
-            const lineItems = paymentData.map(p => ({
-                settlement_id: settlement.id,
-                payment_id: p.id,
-                appointment_id: p.appointment_id,
-                consultation_fee: p.amount - (p.platform_fee || 0),
-                platform_fee: p.platform_fee || 0,
-                hospital_amount: p.hospital_amount || 0,
-            }));
-
-            await settlementRepository.createLineItems(lineItems);
-        }
-
-        return settlement;
+      await settlementRepository.createLineItems(refundItems);
     }
 
-    /**
-     * Initiate payout
-     */
-    async initiatePayout(settlementId: string): Promise<any> {
-        const settlement = await this.getById(settlementId);
+    this.log.info(`Settlement ${settlement.id} created for ${entityType}/${entityId}`);
+    return settlement;
+  }
 
-        if (settlement.status !== 'pending') {
-            throw new BadRequestError('Settlement is not in pending status');
-        }
+  /** Admin approves a pending settlement */
+  async approve(settlementId: string, approvedByUserId: string) {
+    const settlement = await this.getById(settlementId);
 
-        const updated = await settlementRepository.update(settlementId, {
-            status: 'processing',
-            initiated_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-        } as any);
-
-        return updated;
+    if (settlement.status !== 'pending') {
+      throw new BadRequestError('Only pending settlements can be approved');
     }
 
-    /**
-     * Mark settlement as completed
-     */
-    async complete(settlementId: string, bankReference: string): Promise<any> {
-        const updated = await settlementRepository.update(settlementId, {
-            status: 'completed',
-            bank_reference: bankReference,
-            completed_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-        } as any);
+    const updated = await settlementRepository.update(settlementId, {
+      status: 'processing' as any,
+      approved_by: approvedByUserId,
+      approved_at: new Date().toISOString(),
+    } as any);
 
-        return updated;
+    this.log.info(`Settlement ${settlementId} approved by ${approvedByUserId}`);
+    return updated;
+  }
+
+  /** Initiate payout (after approval) */
+  async initiatePayout(settlementId: string) {
+    const settlement = await this.getById(settlementId);
+
+    if (settlement.status !== 'processing') {
+      throw new BadRequestError('Settlement must be in processing status to initiate payout');
     }
 
-    /**
-     * Get hospital settlements
-     */
-    async getHospitalSettlements(hospitalId: string, page = 1, limit = 20): Promise<SettlementListResponse> {
-        return this.list({ hospitalId, page, limit });
+    const updated = await settlementRepository.update(settlementId, {
+      processed_at: new Date().toISOString(),
+    } as any);
+
+    this.log.info(`Payout initiated for settlement ${settlementId}`);
+    return updated;
+  }
+
+  /** Mark settlement as completed with UTR */
+  async complete(settlementId: string, input: CompleteSettlementInput) {
+    const settlement = await this.getById(settlementId);
+
+    if (settlement.status !== 'processing') {
+      throw new BadRequestError('Settlement must be in processing status to complete');
     }
 
-    /**
-     * Get settlement stats
-     */
-    async getStats(): Promise<any> {
-        const { pending, completed } = await settlementRepository.getStats();
+    const updated = await settlementRepository.update(settlementId, {
+      status: 'completed' as any,
+      utr_number: input.utrNumber,
+    } as any);
 
-        return {
-            pendingAmount: pending.reduce((s, r) => s + Number(r.net_settlement), 0),
-            completedAmount: completed.reduce((s, r) => s + Number(r.net_settlement), 0),
-            pendingCount: pending.length,
-            completedCount: completed.length,
-        };
-    }
+    this.log.info(`Settlement ${settlementId} completed with UTR ${input.utrNumber}`);
+    return updated;
+  }
 }
 
 export const settlementService = new SettlementService();
-
 

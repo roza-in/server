@@ -1,11 +1,11 @@
-import type { UserRole, OTPPurpose, Hospital, Doctor, Gender } from '../../types/database.types.js';
+import type { UserRole, OTPPurpose, Hospital, Doctor, Gender, BloodGroup } from '../../types/database.types.js';
 
 /**
- * Auth Module Types
+ * Auth Module Types — production-ready, aligned with DB schema
  */
 
 // ============================================================================
-// Request/Response Types
+// Token / Session
 // ============================================================================
 
 export interface AuthTokens {
@@ -14,15 +14,18 @@ export interface AuthTokens {
   expiresIn: number;
 }
 
+// ============================================================================
+// User Profile (API response shape — camelCase)
+// ============================================================================
+
 export interface UserProfile {
   id: string;
-  phone: string;
+  phone: string | null;
   email: string | null;
-  name: string | null;
+  name: string;
   role: UserRole;
   avatarUrl: string | null;
-  profile_picture_url?: string | null;
-  profilePictureUrl?: string | null;
+  coverUrl: string | null;
   phoneVerified: boolean;
   emailVerified: boolean;
   isActive: boolean;
@@ -30,16 +33,23 @@ export interface UserProfile {
   blockedReason?: string | null;
   gender?: Gender | null;
   dateOfBirth?: string | null;
+  bloodGroup?: BloodGroup | null;
+  address?: Record<string, unknown> | null;
+  emergencyContact?: Record<string, unknown> | null;
+  allergies?: string[] | null;
+  medicalConditions?: string[] | null;
+  verificationStatus?: string;
   hospitalId?: string;
   doctorId?: string;
-  doctor?: Doctor | null;
-  hospital?: Hospital | null;
+  doctor?: Partial<Doctor> | null;
+  hospital?: Partial<Hospital> | null;
   lastLoginAt?: string | null;
   createdAt: string;
-  // For compatibility with legacy code or specific UI needs
-  doctors?: Doctor[];
-  hospitals?: Hospital[];
 }
+
+// ============================================================================
+// Auth Responses
+// ============================================================================
 
 export interface LoginResponse {
   user: UserProfile;
@@ -52,12 +62,16 @@ export interface OTPSendResponse {
   phone?: string;
   email?: string;
   expiresIn: number;
-  otp?: string; // Only in development
 }
 
 // ============================================================================
-// Google OAuth
+// Auth Inputs (non-Zod — service-layer contracts)
 // ============================================================================
+
+export interface PasswordLoginInput {
+  email: string;
+  password: string;
+}
 
 export interface GoogleOAuthData {
   iss: string;
@@ -75,105 +89,14 @@ export interface GoogleOAuthData {
 
 export interface GoogleOAuthInput {
   idToken: string;
-  deviceInfo?: any;
+  deviceInfo?: DeviceInfo;
   ipAddress?: string;
   userAgent?: string;
 }
 
-export interface PasswordLoginInput {
-  email: string;
-  password: string;
-}
-
 // ============================================================================
-// WhatsApp OTP
+// Device / Session
 // ============================================================================
-
-export interface WhatsAppOTPInput {
-  phone: string;
-  purpose: OTPPurpose;
-}
-
-export interface WhatsAppOTPVerifyInput {
-  phone: string;
-  code: string;
-  purpose: OTPPurpose;
-}
-
-// ============================================================================
-// Registration Data
-// ============================================================================
-
-export interface RegisterPatientData {
-  phone: string;
-  otp: string;
-  name: string;
-  email?: string;
-  password?: string;
-  gender?: Gender;
-  dateOfBirth?: string;
-}
-
-export interface RegisterHospitalData {
-  phone: string;
-  otp: string;
-  name: string;
-  email?: string;
-  password?: string;
-  hospital: {
-    name: string;
-    type?: string;
-    registrationNumber?: string;
-    phone: string;
-    email?: string;
-    address: string;
-    city: string;
-    state: string;
-    pincode: string;
-    landmark?: string;
-    country?: string;
-    latitude?: number;
-    longitude?: number;
-    about?: string;
-    specialties?: string[];
-    facilities?: string[];
-  };
-}
-
-export interface AddDoctorData {
-  userId: string;
-  hospitalId: string;
-  specializationId?: string;
-  medicalRegistrationNumber: string;
-  title: string;
-  qualifications?: any;
-  experienceYears: number;
-  bio?: string;
-  languagesSpoken?: string[];
-  consultationFeeOnline: number;
-  consultationFeeInPerson: number;
-  consultationFeeWalkIn?: number;
-  consultationDuration?: number;
-  acceptsOnline?: boolean;
-  acceptsInPerson?: boolean;
-  acceptsWalkIn?: boolean;
-}
-
-// ============================================================================
-// Session Types
-// ============================================================================
-
-export interface SessionData {
-  id: string;
-  userId: string;
-  deviceInfo?: any;
-  ipAddress?: string;
-  userAgent?: string;
-  location?: any;
-  isActive: boolean;
-  lastActivityAt: string;
-  createdAt: string;
-}
 
 export interface DeviceInfo {
   deviceId?: string;
@@ -183,5 +106,16 @@ export interface DeviceInfo {
   osVersion?: string;
   browser?: string;
   browserVersion?: string;
+}
+
+export interface SessionInfo {
+  id: string;
+  userId: string;
+  deviceInfo?: DeviceInfo;
+  ipAddress?: string;
+  userAgent?: string;
+  isActive: boolean;
+  lastUsedAt: string;
+  createdAt: string;
 }
 

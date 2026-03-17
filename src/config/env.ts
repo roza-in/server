@@ -77,9 +77,17 @@ const envSchema = z.object({
    SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
 
    /* =========================
-      JWT
+      JWT — S7: Single source of truth for JWT secret.
+      All token signing/verification uses env.JWT_SECRET via jwtConfig.
    ========================== */
-   JWT_SECRET: z.string().min(32),
+   JWT_SECRET: z.string().min(32).refine(
+      (val) => {
+         // S7: Reject low-entropy secrets (all same char, sequential, etc.)
+         const uniqueChars = new Set(val).size;
+         return uniqueChars >= 10;
+      },
+      { message: 'JWT_SECRET must have at least 10 unique characters for sufficient entropy' },
+   ),
    JWT_ACCESS_TOKEN_EXPIRES_IN: z.string().default('1h'),
    JWT_REFRESH_TOKEN_EXPIRES_IN: z.string().default('7d'),
    JWT_ISSUER: z.string().default('rozx'),
@@ -236,20 +244,8 @@ const parseEnv = () => {
          console.error(`- ${e.path.join('.')}: ${e.message}`);
       });
 
-      if (process.env.NODE_ENV === 'production') {
-         console.error('\nWARNING: Starting in production with invalid env. Using partial data and defaults.\n');
-         // Use the data that did pass validation, and for failed fields,
-         // Zod doesn't provide them in .data if they failed.
-         // We'll return the raw process.env as a last resort, but cast to Env
-         // IMPORTANT: In production, we try to keep the app alive.
-         return {
-            ...process.env,
-            // Core overrides to ensure app starts
-            NODE_ENV: 'production',
-            PORT: Number(process.env.PORT) || 5000,
-         } as unknown as Env;
-      }
-
+      // C8 Fix: ALWAYS crash on invalid env — never start with missing config
+      console.error('\nFATAL: Cannot start with invalid environment configuration. Fix the above errors and restart.\n');
       process.exit(1);
    }
 
@@ -287,6 +283,7 @@ export const features = {
    email: (!!env.SMTP_HOST && !!env.SMTP_USER && !!env.SMTP_PASS),
    sms: !!env.EXOTEL_SID && !!env.EXOTEL_API_KEY && !!env.EXOTEL_API_TOKEN,
    video:
-      !!env.AGORA_APP_ID && !!env.AGORA_APP_CERTIFICATE,
+      (!!env.AGORA_APP_ID && !!env.AGORA_APP_CERTIFICATE) ||
+      (!!env.ZEGOCLOUD_APP_ID && !!(env.ZEGOCLOUD_SERVER_SECRET || env.ZEGOCLOUD_APP_SIGN)),
 }
 

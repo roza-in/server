@@ -11,6 +11,8 @@ import { errorMiddleware } from './middlewares/error.middleware.js';
 import { requestIdMiddleware } from './middlewares/request-id.middleware.js';
 import { metricsMiddleware, getMetricsSummary } from './config/metrics.js';
 import { rateLimit } from './middlewares/rate-limit.middleware.js';
+import { csrfProtection } from './middlewares/csrf.middleware.js';
+import { apiVersioning } from './middlewares/api-versioning.middleware.js';
 import { authMiddleware } from './middlewares/auth.middleware.js';
 import { roleGuard } from './middlewares/role.middleware.js';
 
@@ -165,6 +167,16 @@ export function createApp(): Application {
   }));
 
   // 4. Body parsing with size limits
+  // Capture raw body for webhook signature verification (C4 fix)
+  app.use('/api/v1/payments/webhook', express.json({
+    limit: '1mb',
+    strict: true,
+    verify: (req: any, _res, buf) => {
+      // Store raw body buffer for HMAC signature verification
+      req.rawBody = buf;
+    },
+  }));
+
   app.use(express.json({
     limit: '10mb',
     // Reject requests with wrong content-type
@@ -177,6 +189,13 @@ export function createApp(): Application {
 
   // 6. Cookie Parser
   app.use(cookieParser(env.COOKIE_SECRET));
+
+  // 6.5 CSRF Protection — Double-Submit Cookie Pattern (I8)
+  // Validates X-CSRF-Token header matches rozx_csrf cookie on state-changing requests.
+  // Skips webhooks (HMAC-verified) and API key auth.
+  if (isProduction) {
+    app.use(csrfProtection);
+  }
 
   // 7. Request ID and timing
   app.use(requestIdMiddleware);
@@ -198,19 +217,19 @@ export function createApp(): Application {
     app.use(morgan(
       isProduction
         ? ':remote-addr :method :url :status :res[content-length] - :response-time ms'
-        : 'dev',
+        : ':method :url :status :response-time ms',
       {
         stream: {
-          write: (message: string) => logger.info(message.trim()),
+          write: (message: string) => logger.info(message.trim(), { type: 'http' }),
         },
-        // Skip health check logging in production
-        skip: (req) => isProduction && req.url === '/health',
+        // Skip health check logging to reduce noise
+        skip: (req) => req.url === '/health',
       }
     ));
   }
 
-  // 9. API Routes
-  app.use(`/api/${env.API_VERSION}`, routes);
+  // 9. API Routes (with versioning headers — I7)
+  app.use(`/api/${env.API_VERSION}`, apiVersioning, routes);
 
   // 10. Health Check (detailed)
   app.get('/health', (_req: Request, res: Response) => {
@@ -234,7 +253,7 @@ export function createApp(): Application {
   // 11. Root endpoint
   app.get('/', (_req: Request, res: Response) => {
     res.json({
-      name: 'ROZX Healthcare API',
+      name: 'Rozx Healthcare API',
       version: process.env.npm_package_version || '1.0.0',
       environment: env.NODE_ENV,
     });

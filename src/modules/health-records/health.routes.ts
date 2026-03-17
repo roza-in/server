@@ -45,15 +45,23 @@ import {
   deleteFamilyMemberSchema,
   uploadDocumentSchema,
   updateDocumentSchema,
+  getDocumentSchema,
+  deleteDocumentSchema,
   listDocumentsSchema,
   createVitalRecordSchema,
+  getVitalSchema,
+  deleteVitalSchema,
   listVitalsSchema,
   createMedicationSchema,
   updateMedicationSchema,
+  getMedicationSchema,
+  deleteMedicationSchema,
   listMedicationsSchema,
-  recordReminderActionSchema,
+  recordMedicationActionSchema,
   createAllergySchema,
   updateAllergySchema,
+  getAllergySchema,
+  deleteAllergySchema,
   listAllergiesSchema,
   getHealthSummarySchema,
 } from './health-records.validator.js';
@@ -152,7 +160,7 @@ router.get(
  * @desc Get document details
  * @access Private
  */
-router.get('/documents/:documentId', authMiddleware, getDocument);
+router.get('/documents/:documentId', authMiddleware, validate(getDocumentSchema), getDocument);
 
 /**
  * @route PATCH /api/v1/health/documents/:documentId
@@ -171,7 +179,7 @@ router.patch(
  * @desc Delete document
  * @access Private
  */
-router.delete('/documents/:documentId', authMiddleware, deleteDocument);
+router.delete('/documents/:documentId', authMiddleware, validate(deleteDocumentSchema), deleteDocument);
 
 // ============================================================================
 // Vital Records
@@ -213,14 +221,14 @@ router.get('/vitals/trends', authMiddleware, getVitalTrends);
  * @desc Get vital record details
  * @access Private
  */
-router.get('/vitals/:vitalId', authMiddleware, getVitalRecord);
+router.get('/vitals/:vitalId', authMiddleware, validate(getVitalSchema), getVitalRecord);
 
 /**
  * @route DELETE /api/v1/health/vitals/:vitalId
  * @desc Delete vital record
  * @access Private
  */
-router.delete('/vitals/:vitalId', authMiddleware, deleteVitalRecord);
+router.delete('/vitals/:vitalId', authMiddleware, validate(deleteVitalSchema), deleteVitalRecord);
 
 // ============================================================================
 // Medications & Reminders
@@ -262,7 +270,7 @@ router.get('/reminders', authMiddleware, getUpcomingReminders);
  * @desc Get medication details
  * @access Private
  */
-router.get('/medications/:medicationId', authMiddleware, getMedication);
+router.get('/medications/:medicationId', authMiddleware, validate(getMedicationSchema), getMedication);
 
 /**
  * @route PATCH /api/v1/health/medications/:medicationId
@@ -281,7 +289,7 @@ router.patch(
  * @desc Stop/delete medication
  * @access Private
  */
-router.delete('/medications/:medicationId', authMiddleware, deleteMedication);
+router.delete('/medications/:medicationId', authMiddleware, validate(deleteMedicationSchema), deleteMedication);
 
 /**
  * @route POST /api/v1/health/medications/:medicationId/actions
@@ -291,7 +299,7 @@ router.delete('/medications/:medicationId', authMiddleware, deleteMedication);
 router.post(
   '/medications/:medicationId/actions',
   authMiddleware,
-  validate(recordReminderActionSchema),
+  validate(recordMedicationActionSchema),
   recordMedicationAction
 );
 
@@ -328,7 +336,7 @@ router.get(
  * @desc Get allergy details
  * @access Private
  */
-router.get('/allergies/:allergyId', authMiddleware, getAllergy);
+router.get('/allergies/:allergyId', authMiddleware, validate(getAllergySchema), getAllergy);
 
 /**
  * @route PATCH /api/v1/health/allergies/:allergyId
@@ -347,7 +355,7 @@ router.patch(
  * @desc Delete allergy
  * @access Private
  */
-router.delete('/allergies/:allergyId', authMiddleware, deleteAllergy);
+router.delete('/allergies/:allergyId', authMiddleware, validate(deleteAllergySchema), deleteAllergy);
 
 // ============================================================================
 // Health Summary

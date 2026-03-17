@@ -1,18 +1,29 @@
 import winston from 'winston';
 import { env, isProduction } from './env.js';
 
-// Custom format for development (pretty, colored output)
+// ── Level icons for dev readability ──────────────────────────────────
+const LEVEL_ICONS: Record<string, string> = {
+  error: '✗',
+  warn: '⚠',
+  info: '●',
+  debug: '○',
+};
+
+// Custom format for development (pretty, colored, no service noise)
 const devFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
+  winston.format.timestamp({ format: 'HH:mm:ss' }),
+  winston.format.printf(({ timestamp, level, message, context, service: _s, ...meta }) => {
+    const icon = LEVEL_ICONS[level.replace(/\u001b\[\d+m/g, '')] || '·';
     const ctx = context ? `[${context}] ` : '';
-    const metaStr = Object.keys(meta).length > 0 ? ` ${JSON.stringify(meta)}` : '';
-    return `${timestamp} ${level}: ${ctx}${message}${metaStr}`;
+    // Only show meta if there are keys beyond the default ones
+    const metaKeys = Object.keys(meta);
+    const metaStr = metaKeys.length > 0 ? `  ${JSON.stringify(meta)}` : '';
+    return `${timestamp} ${level} ${icon} ${ctx}${message}${metaStr}`;
   })
 );
 
-// Custom format for production (structured JSON)
+// Custom format for production (structured JSON with full context)
 const prodFormat = winston.format.combine(
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
@@ -89,10 +100,18 @@ class Logger {
   }
 
   /**
-   * Log HTTP request (for Morgan integration)
+   * Log HTTP request with structured data (replaces morgan stream)
    */
   httpRequest(message: string): void {
     this.winstonLogger.info(message, { type: 'http' });
+  }
+
+  /**
+   * Log HTTP request with structured fields for production correlation
+   */
+  http(meta: { method: string; url: string; status: number; duration: number; ip?: string; requestId?: string }): void {
+    const msg = `${meta.method} ${meta.url} ${meta.status} ${meta.duration}ms`;
+    this.winstonLogger.info(msg, { type: 'http', ...meta });
   }
 
   /**
@@ -127,20 +146,54 @@ class Logger {
   }
 
   /**
-   * Format additional arguments into meta object
+   * Format additional arguments into meta object.
+   * Handles Error instances, Supabase/Postgres error shapes, and plain objects.
    */
   private formatArgs(args: unknown[]): Record<string, unknown> {
     if (args.length === 0) return {};
-    if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
-      // If single object argument, spread it as meta
+
+    if (args.length === 1) {
       const arg = args[0];
       if (arg instanceof Error) {
-        return { error: { message: arg.message, stack: arg.stack } };
+        return {
+          error: arg.message,
+          stack: arg.stack,
+          ...(('code' in arg) ? { code: (arg as any).code } : {}),
+        };
       }
-      return arg as Record<string, unknown>;
+      if (typeof arg === 'object' && arg !== null) {
+        // Supabase/PostgREST error shape: { message, code, details, hint }
+        const a = arg as Record<string, unknown>;
+        if ('code' in a && 'message' in a) {
+          return {
+            error: a.message,
+            code: a.code,
+            ...(a.details ? { details: a.details } : {}),
+            ...(a.hint ? { hint: a.hint } : {}),
+          };
+        }
+        return a;
+      }
+      return { data: arg };
     }
-    // Multiple args or non-object single arg
-    return { data: args };
+
+    // Multiple args — first Error wins, rest as data
+    const result: Record<string, unknown> = {};
+    const extras: unknown[] = [];
+    for (const arg of args) {
+      if (arg instanceof Error && !result.error) {
+        result.error = arg.message;
+        result.stack = arg.stack;
+      } else {
+        extras.push(arg);
+      }
+    }
+    if (extras.length === 1 && typeof extras[0] === 'object' && extras[0] !== null) {
+      Object.assign(result, extras[0]);
+    } else if (extras.length > 0) {
+      result.data = extras;
+    }
+    return result;
   }
 }
 

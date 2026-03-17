@@ -1,10 +1,12 @@
 import crypto from 'crypto';
 
+/**
+ * Generate a cryptographically secure OTP using crypto.randomInt
+ */
 export const generateOTP = (length = 6): string => {
-    const digits = '0123456789';
     let otp = '';
     for (let i = 0; i < length; i++) {
-        otp += digits[Math.floor(Math.random() * 10)];
+        otp += crypto.randomInt(0, 10).toString();
     }
     return otp;
 };

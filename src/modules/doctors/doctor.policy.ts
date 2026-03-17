@@ -7,11 +7,13 @@ import type { DoctorRow } from './doctor.types.js';
  */
 export class DoctorPolicy extends BasePolicy<DoctorRow> {
     /**
-     * Only owner or admin can update doctor profile
+     * Owner, hospital admin, or platform admin can update doctor profile
      */
-    canUpdate(user: AuthUser, doctor?: { user_id: string }): boolean {
+    canUpdate(user: AuthUser, doctor?: { user_id: string; hospital_id?: string }): boolean {
         if (!doctor) return false;
-        return doctor.user_id === user.userId;
+        if (user.role === 'admin') return true;
+        if (doctor.user_id === user.userId) return true;
+        return user.role === 'hospital' && !!user.hospitalId && user.hospitalId === doctor.hospital_id;
     }
 
     /**

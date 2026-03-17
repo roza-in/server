@@ -228,10 +228,12 @@ export const appointmentStatusSchema = z.enum([
 export const paymentStatusSchema = z.enum([
   'pending',
   'processing',
-  'success',
+  'completed',
   'failed',
   'refunded',
   'partially_refunded',
+  'expired',
+  'disputed',
 ]);
 
 export const paymentMethodSchema = z.enum(['upi', 'card', 'net_banking', 'wallet', 'cash']);
@@ -240,7 +242,7 @@ export const transactionTypeSchema = z.enum(['consultation', 'subscription', 're
 export const notificationTypeSchema = z.enum(['whatsapp', 'sms', 'email', 'push']);
 export const notificationStatusSchema = z.enum(['pending', 'sent', 'delivered', 'failed', 'read']);
 export const documentTypeSchema = z.enum(['prescription', 'lab_report', 'imaging', 'medical_certificate', 'other']);
-export const bookingSourceSchema = z.enum(['web', 'mobile', 'whatsapp', 'reception']);
+export const bookingSourceSchema = z.enum(['app', 'web', 'reception', 'admin']);
 
 // =============================================================================
 // Utility Functions

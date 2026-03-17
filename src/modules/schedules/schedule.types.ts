@@ -1,23 +1,25 @@
 /**
  * Types for schedules module
  * Hospital-managed doctor schedules and slot generation
+ *
+ * Response DTOs — camelCase transforms of DB snake_case rows.
+ * Input types are inferred from Zod schemas in schedule.validator.ts.
  */
 
-// Day of week enum matching database
-export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+// Re-export canonical enums from database types
+export type { DayOfWeek, ConsultationType, ScheduleOverrideType } from '../../types/database.types.js';
+import type { DayOfWeek, ConsultationType, ScheduleOverrideType } from '../../types/database.types.js';
 
-// Consultation type matching database
-export type ConsultationType = 'online' | 'in_person' | 'walk_in';
+// ============================================================
+// RESPONSE DTOs (camelCase transforms of DB rows)
+// ============================================================
 
-// Schedule override type matching database
-export type ScheduleOverrideType = 'holiday' | 'leave' | 'emergency' | 'special_hours';
-
-// Doctor schedule (weekly recurring)
-// NOTE: Consultation types are inherited from doctor.consultation_types (global setting)
-export interface DoctorSchedule {
+/** Doctor schedule (weekly recurring) */
+export interface DoctorScheduleDTO {
   id: string;
   doctorId: string;
   dayOfWeek: DayOfWeek;
+  consultationType: ConsultationType;
   startTime: string;
   endTime: string;
   breakStart: string | null;
@@ -29,8 +31,8 @@ export interface DoctorSchedule {
   updatedAt: string;
 }
 
-// Schedule override (for specific dates)
-export interface ScheduleOverride {
+/** Schedule override (for specific dates) */
+export interface ScheduleOverrideDTO {
   id: string;
   doctorId: string;
   overrideDate: string;
@@ -41,8 +43,8 @@ export interface ScheduleOverride {
   createdAt: string;
 }
 
-// Appointment slot (generated from schedules)
-export interface AppointmentSlot {
+/** Appointment slot (generated from schedules) */
+export interface AppointmentSlotDTO {
   id: string;
   doctorId: string;
   slotDate: string;
@@ -51,52 +53,22 @@ export interface AppointmentSlot {
   consultationType: ConsultationType;
   maxBookings: number;
   currentBookings: number;
+  lockedUntil: string | null;
+  lockedBy: string | null;
+  lockVersion: number;
   isAvailable: boolean;
   isBlocked: boolean;
   blockReason: string | null;
   createdAt: string;
 }
 
-// Input types
-// NOTE: Consultation types come from doctor.consultation_types, not per-schedule
-export interface CreateScheduleInput {
-  dayOfWeek: DayOfWeek;
-  startTime: string;
-  endTime: string;
-  breakStart?: string;
-  breakEnd?: string;
-  slotDurationMinutes?: number;
-  maxPatientsPerSlot?: number;
-}
-
-export interface UpdateScheduleInput {
-  startTime?: string;
-  endTime?: string;
-  breakStart?: string | null;
-  breakEnd?: string | null;
-  slotDurationMinutes?: number;
-  maxPatientsPerSlot?: number;
-  isActive?: boolean;
-}
-
-export interface BulkScheduleInput {
-  schedules: CreateScheduleInput[];
-}
-
-export interface CreateOverrideInput {
-  overrideDate: string;
-  overrideType: ScheduleOverrideType;
-  startTime?: string;
-  endTime?: string;
-  reason?: string;
-}
-
-// Weekly schedule view
+/** Weekly schedule view (grouped by day) */
 export interface WeeklySchedule {
   [day: string]: {
     dayName: string;
     schedules: {
       id: string;
+      consultationType: ConsultationType;
       startTime: string;
       endTime: string;
       breakStart: string | null;
@@ -107,7 +79,7 @@ export interface WeeklySchedule {
   };
 }
 
-// Generated slot for public API
+/** Generated slot for public API */
 export interface AvailableSlot {
   date: string;
   startTime: string;

@@ -110,9 +110,11 @@ export const razorpayWebhookAuth = (req: Request, res: Response, next: NextFunct
     }
 
     try {
-        // Get raw body for signature verification
-        // Note: This requires raw body middleware to be configured
-        const payload = JSON.stringify(req.body);
+        // Use raw body bytes for signature verification (C4 fix)
+        // req.rawBody is set by the verify callback in express.json()
+        const payload = (req as any).rawBody
+            ? (req as any).rawBody
+            : JSON.stringify(req.body); // Fallback — less secure but keeps backward compat
         const expectedSignature = crypto
             .createHmac('sha256', webhookSecret)
             .update(payload)
@@ -131,6 +133,62 @@ export const razorpayWebhookAuth = (req: Request, res: Response, next: NextFunct
     } catch (error) {
         if (error instanceof ApiError) throw error;
         log.error('Razorpay signature verification error', error);
+        throw new ApiError('Signature verification failed', 401);
+    }
+
+    next();
+};
+
+/**
+ * Cashfree-specific webhook authentication
+ * Verifies X-Webhook-Signature header using HMAC-SHA256 + timing-safe comparison.
+ * Mirrors the razorpayWebhookAuth pattern so verification happens at the route level.
+ */
+export const cashfreeWebhookAuth = (req: Request, res: Response, next: NextFunction) => {
+    const signature = req.headers['x-webhook-signature'] as string;
+    const webhookSecret = env.CASHFREE_WEBHOOK_SECRET;
+
+    // Check if signature header is present
+    if (!signature) {
+        log.warn('Missing X-Webhook-Signature header on Cashfree webhook');
+        throw new ApiError('Missing Cashfree signature', 401);
+    }
+
+    // SECURITY: Webhook secret is REQUIRED in production
+    if (!webhookSecret) {
+        if (isProduction) {
+            log.error('CASHFREE_WEBHOOK_SECRET not configured in production - this is a security requirement');
+            throw new ApiError('Webhook configuration error', 500);
+        }
+        log.warn('CASHFREE_WEBHOOK_SECRET not configured - signature not verified (development only)');
+        return next();
+    }
+
+    try {
+        // Use raw body bytes when available, fall back to JSON.stringify
+        const payload = (req as any).rawBody
+            ? (req as any).rawBody
+            : JSON.stringify(req.body);
+
+        // Cashfree uses base64-encoded HMAC-SHA256
+        const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(payload)
+            .digest('base64');
+
+        const expectedBuffer = Buffer.from(expectedSignature);
+        const providedBuffer = Buffer.from(signature);
+
+        if (expectedBuffer.length !== providedBuffer.length ||
+            !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+            log.warn('Invalid Cashfree webhook signature');
+            throw new ApiError('Invalid Cashfree signature', 401);
+        }
+
+        log.debug('Cashfree webhook signature verified');
+    } catch (error) {
+        if (error instanceof ApiError) throw error;
+        log.error('Cashfree signature verification error', error);
         throw new ApiError('Signature verification failed', 401);
     }
 

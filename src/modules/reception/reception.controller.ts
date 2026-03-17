@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { receptionService } from './reception.service.js';
 import { sendSuccess, sendCreated } from '../../common/responses/index.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
+import { BadRequestError } from '../../common/errors/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { WalkInBookingInput } from './reception.types.js';
 
@@ -151,9 +152,58 @@ export const checkInWithPayment = asyncHandler(async (req: Request, res: Respons
 });
 
 export const getPrescription = asyncHandler(async (req: Request, res: Response) => {
-    const { hospitalId } = req.user;
+    const user = (req as AuthenticatedRequest).user;
+    const hospitalId = user.hospitalId;
     const { appointmentId } = req.params;
+
+    if (!hospitalId) {
+        return res.status(400).json({ error: 'User is not associated with a hospital' });
+    }
 
     const result = await receptionService.getPrescriptionForAppointment(appointmentId, hospitalId);
     return sendSuccess(res, result, 'Prescription fetched successfully');
+});
+
+/**
+ * Verify/approve a cash payment (supervisor approval — I6)
+ * PATCH /api/v1/reception/payments/:paymentId/verify
+ * Only hospital role (supervisor) can verify — reception cannot self-verify.
+ */
+export const verifyCashPayment = asyncHandler(async (req: Request, res: Response) => {
+    const user = (req as AuthenticatedRequest).user;
+    const hospitalId = user.hospitalId;
+    const { paymentId } = req.params;
+
+    if (!hospitalId) {
+        return res.status(400).json({ error: 'User is not associated with a hospital' });
+    }
+
+    if (user.role !== 'hospital' && user.role !== 'admin') {
+        throw new BadRequestError('Only hospital supervisors or admins can verify cash payments');
+    }
+
+    const result = await receptionService.verifyCashPayment(
+        paymentId,
+        hospitalId,
+        user.userId
+    );
+    return sendSuccess(res, result, 'Cash payment verified by supervisor');
+});
+
+/**
+ * Get end-of-day cash reconciliation summary (I6)
+ * GET /api/v1/reception/reconciliation
+ */
+export const getCashReconciliation = asyncHandler(async (req: Request, res: Response) => {
+    const user = (req as AuthenticatedRequest).user;
+    const hospitalId = user.hospitalId;
+    const { date } = req.query as any;
+
+    if (!hospitalId) {
+        return res.status(400).json({ error: 'User is not associated with a hospital' });
+    }
+
+    const targetDate = date || new Date().toISOString().split('T')[0];
+    const result = await receptionService.getCashReconciliation(hospitalId, targetDate);
+    return sendSuccess(res, result, 'Cash reconciliation summary');
 });

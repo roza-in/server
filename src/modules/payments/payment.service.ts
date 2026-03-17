@@ -2,7 +2,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { getCurrentIST, formatAppointmentDate, formatToIST } from '../../common/utils/date.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
-import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';
+import { NotificationPurpose } from '../../integrations/notification/notification.types.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../common/errors/index.js';
 import { PLATFORM_FEES, GST_RATE } from '../../config/constants.js';
 import { paymentRepository } from '../../database/repositories/payment.repo.js';
@@ -11,11 +11,9 @@ import { creditRepository } from '../../database/repositories/credit.repo.js';
 import { refundRepository } from '../../database/repositories/refund.repo.js';
 import { settlementRepository } from '../../database/repositories/settlement.repo.js';
 import { paymentService as paymentIntegration } from '../../integrations/payments/payment.service.js';
-import { CashfreeService } from '../../integrations/payments/cashfree/cashfree.service.js';
-import { CashfreeWebhook } from '../../integrations/payments/cashfree/cashfree.webhook.js';
 import type { PaymentStatus } from '../../types/database.types.js';
+import type { Payment } from '../../types/database.types.js';
 import type {
-  Payment,
   PaymentWithDetails,
   PaymentListItem,
   PaymentFilters,
@@ -274,9 +272,8 @@ class PaymentService {
     // Fetch payment details from Provider
     const providerPayment = await paymentIntegration.fetchPayment(gateway_payment_id);
 
-    // RPC verify_payment is broken (refers to non-existent paid_at column)
-    // We strictly follow user instruction NOT to touch migration files.
-    // So we manualy update repositories here.
+    // RPC verify_payment is now fixed — using direct updates for Razorpay path
+    // since we also need additional appointment/slot logic beyond the RPC scope.
 
     const paidAt = getCurrentIST();
     const paymentMethod = this.mapPaymentMethod(providerPayment.method || 'unknown');
@@ -337,29 +334,28 @@ class PaymentService {
       return this.getById(payment.id);
     }
 
-    // Fetch order status from Cashfree
-    const orderStatus = await CashfreeService.fetchOrder(orderId);
-    const payments = await CashfreeService.fetchPayments(orderId);
-    const latestPayment = payments?.[0];
+    // Fetch order status from Cashfree via integration layer
+    const orderResult = await paymentIntegration.fetchOrderStatus(orderId, 'cashfree');
 
-    // Map Cashfree status
+    // Map normalized status
     const statusMap: Record<string, 'completed' | 'failed' | 'pending'> = {
-      PAID: 'completed',
-      EXPIRED: 'failed',
-      CANCELLED: 'failed',
-      ACTIVE: 'pending',
+      captured: 'completed',
+      failed: 'failed',
+      cancelled: 'failed',
+      created: 'pending',
+      pending: 'pending',
     };
 
-    const internalStatus = statusMap[orderStatus.order_status] || 'pending';
+    const internalStatus = statusMap[orderResult.status] || 'pending';
 
     if (internalStatus !== 'completed') {
-      const errorMessage = orderStatus.order_status || 'Payment not confirmed';
-      this.log.warn('Cashfree payment not successful', { orderId, response: orderStatus });
+      const errorMessage = orderResult.status || 'Payment not confirmed';
+      this.log.warn('Cashfree payment not successful', { orderId, status: orderResult.status });
 
       if (internalStatus === 'failed') {
         await paymentRepository.update(payment.id, {
           status: 'failed',
-          gateway_response: { ...payment.gateway_response as any, cashfree_status: orderStatus },
+          gateway_response: { ...payment.gateway_response as any, cashfree_status: orderResult.raw },
         } as any);
         throw new BadRequestError('Payment failed: ' + errorMessage);
       }
@@ -368,8 +364,8 @@ class PaymentService {
     }
 
     // Payment successful - update records
-    const cashfreePaymentId = latestPayment?.cf_payment_id;
-    const paymentMethod = this.mapPaymentMethod(latestPayment?.payment_method?.type || 'upi');
+    const cashfreePaymentId = orderResult.gateway_payment_id;
+    const paymentMethod = this.mapPaymentMethod((orderResult.method) || 'upi');
     const paidAt = getCurrentIST();
 
     // 1. Update Payment
@@ -377,7 +373,7 @@ class PaymentService {
       status: 'completed',
       gateway_payment_id: cashfreePaymentId,
       payment_method: paymentMethod as any,
-      gateway_response: { cashfree_response: orderStatus },
+      gateway_response: { cashfree_response: orderResult.raw },
       completed_at: paidAt,
     } as any);
 
@@ -429,18 +425,11 @@ class PaymentService {
   /**
    * Handle Cashfree webhook
    */
-  async handleCashfreeWebhook(payload: any, signature: string): Promise<void> {
-    // Verify webhook signature
-    const rawPayload = JSON.stringify(payload);
-    const isValid = CashfreeWebhook.verifySignature(rawPayload, signature);
+  async handleCashfreeWebhook(payload: any): Promise<void> {
+    // Signature already verified by cashfreeWebhookAuth middleware (route-level)
 
-    if (!isValid && signature) {
-      this.log.warn('Invalid Cashfree webhook signature');
-      return; // Don't throw - return 200 to Cashfree anyway
-    }
-
-    // Parse event
-    const event = CashfreeWebhook.parseEvent(payload);
+    // Parse event via integration layer
+    const event = paymentIntegration.parseWebhookEvent(payload, 'cashfree');
     const orderId = event.data.order?.order_id;
     const orderStatus = event.data.order?.order_status;
 
@@ -540,15 +529,15 @@ class PaymentService {
 
     const payments: PaymentListItem[] = result.data.map((p: any) => ({
       id: p.id,
+      payment_number: p.payment_number || null,
       appointment_id: p.appointment_id,
       payment_type: p.payment_type,
-      amount: p.amount,
+      total_amount: Number(p.total_amount),
       status: p.status,
       payment_method: p.payment_method,
-      patient_name: p.patient?.name || null,
-      doctor_name: p.doctor?.users?.name || null,
+      patient_name: p.payer?.name || null,
       hospital_name: p.hospital?.name || null,
-      paid_at: p.paid_at,
+      completed_at: p.completed_at,
       created_at: p.created_at,
     }));
 
@@ -606,11 +595,10 @@ class PaymentService {
     const pendingSettlementsCount = await settlementRepository.getPendingCount();
 
     return {
-      total_revenue: completed.reduce((sum: number, p: any) => sum + Number(p.amount), 0),
+      total_revenue: completed.reduce((sum: number, p: any) => sum + Number(p.total_amount), 0),
       platform_fees: completed.reduce((sum: number, p: any) => sum + Number(p.platform_fee), 0),
-      doctor_payouts: completed.reduce((sum: number, p: any) => sum + Number(p.doctor_amount), 0),
-      hospital_payouts: completed.reduce((sum: number, p: any) => sum + Number(p.hospital_amount), 0),
-      total_refunds: refunded.reduce((sum: number, p: any) => sum + Number(p.amount), 0),
+      net_payable: completed.reduce((sum: number, p: any) => sum + Number(p.net_payable), 0),
+      total_refunds: refunded.reduce((sum: number, p: any) => sum + Number(p.total_refunded || p.total_amount), 0),
       transaction_count: completed.length,
       pending_settlements: pendingSettlementsCount,
     };
@@ -626,7 +614,7 @@ class PaymentService {
     if (data && data.status === 'pending') {
       await paymentRepository.update(data.id, {
         status: 'completed',
-        paid_at: getCurrentIST(),
+        completed_at: getCurrentIST(),
       } as any);
 
       // Also update appointment status
@@ -713,14 +701,14 @@ class PaymentService {
       await notificationService.send({
         purpose: NotificationPurpose.PAYMENT_SUCCESS,
         phone: appointment.patient.phone,
-        channel: NotificationChannel.WhatsApp,
         variables: {
           patient_name: patientName,
           amount: amount.toString(),
           date: dateStr,
           doctor_name: doctorName,
         },
-        whatsappValues: [patientName, amount.toString(), dateStr]
+        // rozx_payment_confirmation: {{1}}=patient {{2}}=amount {{3}}=date
+        whatsappValues: [patientName, amount.toString(), dateStr],
       });
     } catch (error) {
       this.log.error('Failed to send confirmation notification', { appointmentId, error });

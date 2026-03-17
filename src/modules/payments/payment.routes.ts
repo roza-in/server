@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
-import { webhookApiKeyAuth, razorpayWebhookAuth } from '../../middlewares/webhook-auth.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
+import { webhookApiKeyAuth, razorpayWebhookAuth, cashfreeWebhookAuth } from '../../middlewares/webhook-auth.middleware.js';
 import {
   createOrder,
   getPaymentConfig,
@@ -15,7 +16,17 @@ import {
   handleCashfreeWebhook,
   getPaymentStats,
 } from './payment.controller.js';
-
+import {
+  createOrderSchema,
+  verifyPaymentSchema,
+  cashfreeCallbackSchema,
+  getPaymentSchema,
+  getPaymentConfigSchema,
+  listPaymentsSchema,
+  refundPaymentSchema,
+  paymentStatsSchema,
+  razorpayWebhookSchema,
+} from './payment.validator.js';
 import { idempotencyMiddleware } from '../../middlewares/idempotency.middleware.js';
 
 const router = Router();
@@ -33,6 +44,7 @@ router.post(
   '/create-order',
   authMiddleware,
   roleGuard('patient'),
+  validate(createOrderSchema),
   idempotencyMiddleware(),
   createOrder
 );
@@ -46,6 +58,7 @@ router.get(
   '/config/:appointmentId',
   authMiddleware,
   roleGuard('patient'),
+  validate(getPaymentConfigSchema),
   getPaymentConfig
 );
 
@@ -61,6 +74,7 @@ router.get(
 router.post(
   '/verify',
   authMiddleware,
+  validate(verifyPaymentSchema),
   idempotencyMiddleware(),
   verifyPayment
 );
@@ -73,6 +87,7 @@ router.post(
 router.post(
   '/cashfree/callback',
   authMiddleware,
+  validate(cashfreeCallbackSchema),
   idempotencyMiddleware(),
   verifyCashfreeCallback
 );
@@ -82,7 +97,12 @@ router.post(
  * @desc Get payment status (for polling)
  * @access Private
  */
-router.get('/:paymentId/status', authMiddleware, getPaymentStatus);
+router.get(
+  '/:paymentId/status',
+  authMiddleware,
+  validate(getPaymentSchema),
+  getPaymentStatus
+);
 
 // =============================================================================
 // Payment CRUD
@@ -97,6 +117,7 @@ router.get(
   '/stats/summary',
   authMiddleware,
   roleGuard('admin', 'hospital', 'doctor'),
+  validate(paymentStatsSchema),
   getPaymentStats
 );
 
@@ -105,14 +126,24 @@ router.get(
  * @desc Get payment by ID
  * @access Private
  */
-router.get('/:paymentId', authMiddleware, getPayment);
+router.get(
+  '/:paymentId',
+  authMiddleware,
+  validate(getPaymentSchema),
+  getPayment
+);
 
 /**
  * @route GET /api/v1/payments
  * @desc List payments (filtered by role)
  * @access Private
  */
-router.get('/', authMiddleware, listPayments);
+router.get(
+  '/',
+  authMiddleware,
+  validate(listPaymentsSchema),
+  listPayments
+);
 
 /**
  * @route POST /api/v1/payments/:paymentId/refund
@@ -123,6 +154,7 @@ router.post(
   '/:paymentId/refund',
   authMiddleware,
   roleGuard('admin', 'hospital'),
+  validate(refundPaymentSchema),
   idempotencyMiddleware(),
   refundPayment
 );
@@ -158,10 +190,12 @@ router.post(
 /**
  * @route POST /api/v1/payments/webhook/cashfree
  * @desc Handle Cashfree webhook events
- * @access Public (verified via x-webhook-signature)
+ * @access Public (verified via API key + Cashfree signature)
  */
 router.post(
   '/webhook/cashfree',
+  webhookApiKeyAuth({ optional: true }),
+  cashfreeWebhookAuth,
   handleCashfreeWebhook
 );
 

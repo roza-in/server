@@ -1,14 +1,16 @@
 import { Request, Response } from 'express';
 import { doctorService } from './doctor.service.js';
 import { specializationRepository } from '../../database/repositories/specialization.repo.js';
-import { hospitalRepository } from '../../database/repositories/hospital.repo.js';
+import { cacheGetOrSet, CacheKeys, CacheTTL } from '../../config/redis.js';
 import { sendSuccess, sendPaginated, calculatePagination } from '../../common/responses/index.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
-import type { ListDoctorsInput, UpdateDoctorInput, CreateDoctorInput } from './doctor.validator.js';
+import type { ListDoctorsInput, CreateDoctorInput } from './doctor.validator.js';
+import type { UpdateDoctorInput } from './doctor.types.js';
 import { doctorPolicy } from './doctor.policy.js';
 import { ForbiddenError, NotFoundError } from '../../common/errors/index.js';
+import { hospitalService } from '../hospitals/hospital.service.js';
 
 /**
  * Doctor Controller - Handles HTTP requests for doctors
@@ -56,14 +58,18 @@ export const getDoctorProfile = asyncHandler(async (req: Request, res: Response)
  */
 export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
   const filters = req.query as unknown as ListDoctorsInput;
-  const authUser = (req as AuthenticatedRequest).user;
+  const authUser = (req as AuthenticatedRequest).user; // may be undefined on public routes
 
   // Filter scoped to hospital if requester is hospital admin
-  if (authUser && authUser.role === 'hospital') {
-    const hospital = await hospitalRepository.findByUserId(authUser.userId);
-    if (hospital) {
-      (filters as any).hospital_id = hospital.id;
-      (filters as any).include_unverified = true;
+  if (authUser?.role === 'hospital') {
+    try {
+      const hospital = await hospitalService.getByUserId(authUser.userId);
+      if (hospital) {
+        (filters as any).hospital_id = hospital.id;
+        (filters as any).include_unverified = true;
+      }
+    } catch {
+      // Hospital not found for user — skip scoping
     }
   }
 
@@ -107,14 +113,14 @@ export const updateDoctor = asyncHandler(async (req: Request, res: Response) => 
 export const updateDoctorStatus = asyncHandler(async (req: Request, res: Response) => {
   const { doctorId } = req.params;
   const user = (req as AuthenticatedRequest).user;
-  const { status } = req.body;
+  const { is_active, reason } = req.body;
 
   const doctor = await doctorService.getById(doctorId);
   if (!doctorPolicy.canDelete(user, doctor)) {
     throw new ForbiddenError('You do not have permission to change this doctor status');
   }
 
-  const updated = await doctorService.updateStatus(doctorId, user.userId, user.role, status);
+  const updated = await doctorService.updateStatus(doctorId, user.userId, user.role, is_active, reason);
   return sendSuccess(res, updated, MESSAGES.UPDATED);
 });
 
@@ -139,10 +145,12 @@ export const getDoctorAvailability = asyncHandler(async (req: Request, res: Resp
  * GET /api/v1/doctors/:doctorId/stats
  */
 export const getDoctorStats = asyncHandler(async (req: Request, res: Response) => {
-  const { doctorId } = req.params;
   const user = (req as AuthenticatedRequest).user;
   const { period } = req.query;
-  const stats = await doctorService.getStats(doctorId, user.userId, user.role, period as string);
+
+  // For /me/stats route — resolve doctorId from the authenticated user
+  const doctorProfile = await doctorService.getByUserId(user.userId);
+  const stats = await doctorService.getStats(doctorProfile.id, user.userId, user.role, period as string);
   return sendSuccess(res, stats);
 });
 
@@ -161,7 +169,11 @@ export const getDoctorSchedule = asyncHandler(async (req: Request, res: Response
  * GET /api/v1/doctors/specializations
  */
 export const getSpecializations = asyncHandler(async (req: Request, res: Response) => {
-  const data = await specializationRepository.listAll();
+  const data = await cacheGetOrSet(
+    CacheKeys.specializationAll(),
+    () => specializationRepository.listAll(),
+    CacheTTL.SPECIALIZATIONS,
+  );
   return sendSuccess(res, data);
 });
 

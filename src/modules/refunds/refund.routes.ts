@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
 import {
     listRefunds,
     getRefund,
@@ -8,6 +9,12 @@ import {
     processRefund,
     getRefundStats,
 } from './refund.controller.js';
+import {
+    createRefundSchema,
+    listRefundsSchema,
+    getRefundSchema,
+    processRefundSchema,
+} from './refund.validator.js';
 
 const router = Router();
 
@@ -25,30 +32,29 @@ router.get('/stats', roleGuard('admin'), getRefundStats);
  * @desc List all refunds
  * @access Admin, Hospital
  */
-router.get('/', roleGuard('admin', 'hospital'), listRefunds);
+router.get('/', roleGuard('admin', 'hospital'), validate(listRefundsSchema), listRefunds);
 
 /**
  * @route POST /api/v1/refunds
  * @desc Create a refund request
  * @access Admin, Hospital
  */
-router.post('/', roleGuard('admin', 'hospital'), createRefund);
+router.post('/', roleGuard('admin', 'hospital'), validate(createRefundSchema), createRefund);
 
 /**
  * @route GET /api/v1/refunds/:refundId
  * @desc Get refund by ID
  * @access Admin, Hospital
  */
-router.get('/:refundId', roleGuard('admin', 'hospital'), getRefund);
+router.get('/:refundId', roleGuard('admin', 'hospital'), validate(getRefundSchema), getRefund);
 
 /**
  * @route POST /api/v1/refunds/:refundId/process
  * @desc Process refund (approve/reject)
  * @access Admin
  */
-router.post('/:refundId/process', roleGuard('admin'), processRefund);
+router.post('/:refundId/process', roleGuard('admin'), validate(processRefundSchema), processRefund);
 
 export const refundRoutes = router;
 
 export default router;
-

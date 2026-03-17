@@ -1,14 +1,22 @@
-import { PaymentProvider, PaymentOrder, PaymentRefund } from '../payment.types.js';
+import type { PaymentProvider, PaymentOrder, PaymentRefund, PaymentOrderStatus, WebhookEvent } from '../payment.types.js';
 import { RazorpayService } from './razorpay.service.js';
+import { RazorpayWebhook } from './razorpay.webhook.js';
 import crypto from 'crypto';
 import { env } from '../../../config/env.js';
 import { logger } from '../../../config/logger.js';
 
 export class RazorpayProvider implements PaymentProvider {
-    name = 'razorpay';
+    readonly name = 'razorpay' as const;
     private log = logger.child('RazorpayProvider');
 
-    async createOrder(data: { amount: number; currency: string; receipt: string; notes?: Record<string, string> }): Promise<PaymentOrder> {
+    // ── Orders ────────────────────────────────────────────────────────────
+
+    async createOrder(data: {
+        amount: number;
+        currency: string;
+        receipt: string;
+        notes?: Record<string, string>;
+    }): Promise<PaymentOrder> {
         const order = await RazorpayService.createOrder(data);
         return {
             id: order.id,
@@ -16,7 +24,7 @@ export class RazorpayProvider implements PaymentProvider {
             currency: order.currency,
             receipt: order.receipt,
             notes: order.notes,
-            provider_order_id: order.id
+            provider_order_id: order.id,
         };
     }
 
@@ -24,7 +32,32 @@ export class RazorpayProvider implements PaymentProvider {
         return RazorpayService.fetchPayment(paymentId);
     }
 
-    async createRefund(paymentId: string, data: { amount?: number; speed?: 'normal' | 'optimum'; notes?: Record<string, string> }): Promise<PaymentRefund> {
+    async fetchOrderStatus(orderId: string): Promise<PaymentOrderStatus> {
+        const order = await RazorpayService.fetchOrder(orderId);
+        const { items: payments } = await RazorpayService.fetchOrderPayments(orderId);
+        const latest = payments?.[0];
+
+        const statusMap: Record<string, PaymentOrderStatus['status']> = {
+            paid: 'captured',
+            created: 'created',
+            attempted: 'pending',
+        };
+
+        return {
+            id: orderId,
+            status: statusMap[order.status] || 'pending',
+            method: latest?.method,
+            gateway_payment_id: latest?.id,
+            raw: { order, payments },
+        };
+    }
+
+    // ── Refunds ───────────────────────────────────────────────────────────
+
+    async createRefund(
+        paymentId: string,
+        data: { amount?: number; speed?: 'normal' | 'optimum'; notes?: Record<string, string> },
+    ): Promise<PaymentRefund> {
         const refund = await RazorpayService.createRefund(paymentId, data);
         return {
             id: refund.id,
@@ -32,13 +65,15 @@ export class RazorpayProvider implements PaymentProvider {
             amount: Number(refund.amount),
             status: refund.status,
             speed: refund.speed,
-            notes: refund.notes
+            notes: refund.notes,
         };
     }
 
+    // ── Signature Verification ────────────────────────────────────────────
+
     /**
-     * Verify Razorpay payment signature (for checkout completion)
-     * Uses timing-safe comparison to prevent timing attacks
+     * Verify Razorpay checkout signature (order_id|payment_id HMAC-SHA256).
+     * SECURITY: Timing-safe comparison prevents timing attacks.
      */
     verifySignature(data: { order_id: string; payment_id: string; signature: string }): boolean {
         const secret = env.RAZORPAY_KEY_SECRET;
@@ -48,25 +83,21 @@ export class RazorpayProvider implements PaymentProvider {
         }
 
         if (!data.order_id || !data.payment_id || !data.signature) {
-            this.log.error('Missing required arguments for signature verification', { data });
+            this.log.error('Missing required arguments for signature verification');
             return false;
         }
 
         try {
-            const generated_signature = crypto
+            const generated = crypto
                 .createHmac('sha256', secret)
-                .update(data.order_id + '|' + data.payment_id)
+                .update(`${data.order_id}|${data.payment_id}`)
                 .digest('hex');
 
-            // SECURITY: Use timing-safe comparison to prevent timing attacks
-            const generatedBuffer = Buffer.from(generated_signature);
-            const providedBuffer = Buffer.from(data.signature);
+            const generatedBuf = Buffer.from(generated);
+            const providedBuf = Buffer.from(data.signature);
 
-            if (generatedBuffer.length !== providedBuffer.length) {
-                return false;
-            }
-
-            return crypto.timingSafeEqual(generatedBuffer, providedBuffer);
+            if (generatedBuf.length !== providedBuf.length) return false;
+            return crypto.timingSafeEqual(generatedBuf, providedBuf);
         } catch (error) {
             this.log.error('Signature verification failed', error);
             return false;
@@ -74,35 +105,19 @@ export class RazorpayProvider implements PaymentProvider {
     }
 
     /**
-     * Verify Razorpay webhook signature (for server-to-server webhooks)
-     * Uses timing-safe comparison to prevent timing attacks
+     * Verify Razorpay webhook signature — delegates to RazorpayWebhook.
      */
     verifyWebhookSignature(payload: string | Buffer, signature: string): boolean {
-        const webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
-        if (!webhookSecret) {
-            this.log.error('RAZORPAY_WEBHOOK_SECRET is missing');
-            return false;
-        }
+        return RazorpayWebhook.verifySignature(
+            typeof payload === 'string' ? payload : payload.toString('utf8'),
+            signature,
+        );
+    }
 
-        try {
-            const expectedSignature = crypto
-                .createHmac('sha256', webhookSecret)
-                .update(payload)
-                .digest('hex');
+    // ── Webhook Parsing ───────────────────────────────────────────────────
 
-            // SECURITY: Use timing-safe comparison
-            const expectedBuffer = Buffer.from(expectedSignature);
-            const providedBuffer = Buffer.from(signature);
-
-            if (expectedBuffer.length !== providedBuffer.length) {
-                return false;
-            }
-
-            return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
-        } catch (error) {
-            this.log.error('Webhook signature verification failed', error);
-            return false;
-        }
+    parseWebhookEvent(body: any): WebhookEvent {
+        return RazorpayWebhook.parseEvent(body);
     }
 }
 

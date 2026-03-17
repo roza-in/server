@@ -1,4 +1,4 @@
-import { PaymentProvider, PaymentOrder, PaymentRefund } from '../payment.types.js';
+import type { PaymentProvider, PaymentOrder, PaymentRefund, PaymentOrderStatus, WebhookEvent } from '../payment.types.js';
 import { logger } from '../../../config/logger.js';
 import { CashfreeService } from './cashfree.service.js';
 import { CashfreeWebhook } from './cashfree.webhook.js';
@@ -9,8 +9,10 @@ import { cashfreeClient } from './cashfree.client.js';
  * Implements the PaymentProvider interface for Cashfree Payment Gateway
  */
 export class CashfreeProvider implements PaymentProvider {
-    name = 'cashfree';
+    readonly name = 'cashfree' as const;
     private log = logger.child('CashfreeProvider');
+
+    // ── Orders ────────────────────────────────────────────────────────────
 
     async createOrder(data: {
         amount: number;
@@ -54,7 +56,6 @@ export class CashfreeProvider implements PaymentProvider {
             const payments = await CashfreeService.fetchPayments(paymentId);
             const latestPayment = payments?.[0];
 
-            // Map Cashfree status to normalized status
             const statusMap: Record<string, string> = {
                 PAID: 'captured',
                 ACTIVE: 'created',
@@ -76,13 +77,41 @@ export class CashfreeProvider implements PaymentProvider {
         }
     }
 
+    async fetchOrderStatus(orderId: string): Promise<PaymentOrderStatus> {
+        try {
+            const order = await CashfreeService.fetchOrder(orderId);
+            const payments = await CashfreeService.fetchPayments(orderId);
+            const latest = payments?.[0];
+
+            const statusMap: Record<string, PaymentOrderStatus['status']> = {
+                PAID: 'captured',
+                ACTIVE: 'created',
+                EXPIRED: 'failed',
+                CANCELLED: 'cancelled',
+            };
+
+            return {
+                id: orderId,
+                status: statusMap[order.order_status] || 'pending',
+                method: latest?.payment_method?.type,
+                gateway_payment_id: latest?.cf_payment_id?.toString(),
+                raw: { order, payments },
+            };
+        } catch (error) {
+            this.log.error('Cashfree fetchOrderStatus error', error);
+            throw error;
+        }
+    }
+
+    // ── Refunds ───────────────────────────────────────────────────────────
+
     async createRefund(
         paymentId: string,
         data: {
             amount?: number;
             speed?: 'normal' | 'optimum';
             notes?: Record<string, string>;
-        }
+        },
     ): Promise<PaymentRefund> {
         const refundId = `REF-${Date.now()}`;
 
@@ -107,21 +136,25 @@ export class CashfreeProvider implements PaymentProvider {
         }
     }
 
+    // ── Signature Verification ────────────────────────────────────────────
+
     /**
-     * Verify payment signature from checkout callback
-     * Cashfree passes payment data in query params, signature verification is optional
+     * Verify checkout callback — Cashfree uses API fetch instead of HMAC.
      */
     verifySignature(data: { order_id: string; cf_order_id?: string }): boolean {
-        // For Cashfree, checkout verification is done via API call to fetch order status
-        // We don't use signature verification for checkout flow like Razorpay
-        // Instead, we verify by fetching the order status
         return !!(data.order_id || data.cf_order_id);
     }
 
     /**
-     * Verify webhook signature
+     * Verify webhook signature — delegates to CashfreeWebhook.
      */
     verifyWebhookSignature(payload: string | Buffer, signature: string): boolean {
         return CashfreeWebhook.verifySignature(payload, signature);
+    }
+
+    // ── Webhook Parsing ───────────────────────────────────────────────────
+
+    parseWebhookEvent(body: any): WebhookEvent {
+        return CashfreeWebhook.parseEvent(body);
     }
 }

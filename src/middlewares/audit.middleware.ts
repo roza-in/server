@@ -1,39 +1,46 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabaseAdmin } from '../database/supabase-admin.js';
-import { logger } from '../config/logger.js';
+import { logAudit } from '../config/audit.js';
+import type { AuditAction } from '../types/database.types.js';
 
-import { scrubSensitiveData } from '../common/utils/scrub-data.js';
+/**
+ * Audit middleware — logs user actions after successful responses.
+ * Uses the centralized `logAudit` from config/audit.ts which writes
+ * to the `audit_logs` table with the correct column schema.
+ *
+ * @param action - One of the AuditAction enum values
+ */
+export const auditMiddleware = (action: AuditAction) => {
+    return async (req: Request, _res: Response, next: NextFunction) => {
+        // Store audit action on request so it can be logged after response
+        req.auditAction = action;
 
-export const auditMiddleware = (action: string) => {
-    return async (req: Request, res: Response, next: NextFunction) => {
-        // We log after the response is sent or on error
-        const userId = (req as any).user?.id;
+        const user = (req as any).user;
+        const userId = user?.userId;
 
-        // Capture the original end method
-        const originalEnd = res.end;
+        if (userId) {
+            // Fire-and-forget audit log after response is sent
+            const originalEnd = _res.end;
 
-        (res as any).end = function (chunk: any, encoding: BufferEncoding, cb?: () => void) {
-            const statusCode = res.statusCode;
+            (_res as any).end = function (chunk: any, encoding: BufferEncoding, cb?: () => void) {
+                const statusCode = _res.statusCode;
 
-            if (userId && statusCode < 400) {
-                // Run audit logging after sending response (Fire and forget or handle properly)
-                supabaseAdmin.from('audit_logs').insert({
-                    user_id: userId,
-                    action,
-                    entity_type: req.baseUrl.split('/').pop(),
-                    entity_id: req.params.id || (req.body?.id as string),
-                    old_data: null,
-                    new_data: scrubSensitiveData(req.body),
-                    ip_address: req.ip,
-                    user_agent: req.headers['user-agent'],
-                    status: 'success'
-                }).then(({ error }) => {
-                    if (error) logger.error('Failed to write audit log', error);
-                });
-            }
+                if (statusCode < 400) {
+                    logAudit({
+                        userId,
+                        userRole: user.role,
+                        action,
+                        entityType: req.baseUrl.split('/').pop() || 'unknown',
+                        entityId: req.params.id || (req.body?.id as string),
+                        description: `${action} via ${req.method} ${req.originalUrl}`,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent'],
+                        correlationId: req.requestId,
+                    }).catch(() => { /* logged internally */ });
+                }
 
-            return originalEnd.call(this, chunk, encoding, cb);
-        };
+                return originalEnd.call(this, chunk, encoding, cb);
+            };
+        }
 
         next();
     };

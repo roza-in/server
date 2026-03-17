@@ -5,13 +5,18 @@ import { logger } from './config/logger.js';
 import { db } from './config/database.js';
 import { initSentry, captureException } from './config/sentry.js';
 import { initUpstashRedis } from './config/redis.js';
+import { startJobScheduler, stopJobScheduler } from './jobs/scheduler.js';
+import { startMetricsPersistence, stopMetricsPersistence } from './config/metrics.js';
+import { registerEventSubscribers } from './common/events/index.js';
+import { eventBus } from './common/events/event-bus.js';
+import { initFeatureFlags } from './config/feature-flags.js';
 
 /**
- * ROZX Healthcare Platform - HTTP Server Start
+ * Rozx Healthcare Platform - HTTP Server Start
  */
 const startServer = async () => {
   try {
-    // 1. Initialize Sentry (must be first for error tracking)
+    // 1. Initialize Sentry
     initSentry();
 
     // 2. Initialize Redis (for rate limiting, caching)
@@ -37,6 +42,21 @@ const startServer = async () => {
       logger.info(`API: http://localhost:${PORT}/api/v1`);
       if (features.sentry) logger.info('Sentry error tracking enabled');
       if (features.upstashRedis) logger.info('Upstash Redis rate limiting enabled');
+
+      // 6. Start background job scheduler (C10 fix)
+      startJobScheduler();
+
+      // 7. Start metrics persistence to Redis (production only)
+      startMetricsPersistence();
+
+      // 8. Register domain event subscribers
+      registerEventSubscribers();
+
+      // 9. Start cross-instance event relay (SC4)
+      eventBus.startRelay();
+
+      // 10. Initialize feature flags from Redis (SC7)
+      initFeatureFlags().catch(err => logger.error('Feature flags init failed', err));
     });
 
     // 6. Graceful Shutdown with connection draining
@@ -47,6 +67,11 @@ const startServer = async () => {
       isShuttingDown = true;
 
       logger.info(`${signal} received. Shutting down gracefully...`);
+
+      // Stop job scheduler first
+      stopJobScheduler();
+      stopMetricsPersistence();
+      eventBus.stopRelay();
 
       // Stop accepting new connections
       server.close(() => {

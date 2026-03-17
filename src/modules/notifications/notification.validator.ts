@@ -1,60 +1,89 @@
-// @ts-nocheck
 import { z } from 'zod';
-import { uuidSchema } from '../../common/validators.js';
+import { uuidSchema, paginationSchema } from '../../common/validators.js';
 
 /**
  * Notification validators using Zod
+ *
+ * DB Tables: notifications, notification_preferences, device_tokens,
+ *   notification_templates, scheduled_notifications, notification_queue
+ *
+ * DB Enums:
+ *   notification_type (26 values)
+ *   notification_channel: sms | whatsapp | email | push | in_app
+ *   notification_status: pending | sent | delivered | read | failed
  */
 
-// Notification type enum
+// ============================================================================
+// Enum Schemas (aligned with DB enums from migration 001)
+// ============================================================================
+
 const notificationTypeEnum = z.enum([
   'appointment_booked',
   'appointment_confirmed',
+  'appointment_reminder_24h',
+  'appointment_reminder_1h',
   'appointment_cancelled',
   'appointment_rescheduled',
-  'appointment_reminder',
+  'consultation_started',
+  'consultation_ended',
+  'waiting_room_ready',
   'payment_success',
   'payment_failed',
-  'payment_refund',
+  'refund_initiated',
+  'refund_completed',
   'prescription_ready',
-  'consultation_started',
-  'follow_up_reminder',
+  'medicine_order_confirmed',
+  'medicine_dispatched',
+  'medicine_delivered',
+  'verification_approved',
+  'verification_rejected',
+  'settlement_processed',
+  'payout_completed',
+  'dispute_raised',
   'welcome',
-  'profile_verified',
   'general',
 ]);
 
-// Notification channel enum
 const notificationChannelEnum = z.enum(['sms', 'whatsapp', 'email', 'push', 'in_app']);
 
-// Notification status enum
-const notificationStatusEnum = z.enum(['pending', 'sent', 'delivered', 'failed', 'read']);
+const notificationStatusEnum = z.enum(['pending', 'sent', 'delivered', 'read', 'failed']);
 
-// Send notification schema
+// ============================================================================
+// Send Notification Schemas
+// ============================================================================
+
 export const sendNotificationSchema = z.object({
   body: z.object({
-    userId: uuidSchema,
+    user_id: uuidSchema,
     type: notificationTypeEnum,
     title: z.string().min(1).max(255),
-    message: z.string().min(1).max(1000),
+    body: z.string().min(1).max(1000),
     data: z.record(z.string(), z.any()).optional(),
-    channels: z.array(notificationChannelEnum).default(['in_app']),
+    action_url: z.string().url().max(500).optional(),
+    action_type: z.string().max(50).optional(),
+    appointment_id: uuidSchema.optional(),
+    medicine_order_id: uuidSchema.optional(),
+    payment_id: uuidSchema.optional(),
+    channels: z.array(notificationChannelEnum).min(1).default(['in_app']),
   }),
 });
 
-// Send bulk notification schema
 export const sendBulkNotificationSchema = z.object({
   body: z.object({
-    userIds: z.array(uuidSchema).min(1).max(1000),
+    user_ids: z.array(uuidSchema).min(1).max(1000),
     type: notificationTypeEnum,
     title: z.string().min(1).max(255),
-    message: z.string().min(1).max(1000),
+    body: z.string().min(1).max(1000),
     data: z.record(z.string(), z.any()).optional(),
-    channels: z.array(notificationChannelEnum).default(['in_app']),
+    action_url: z.string().url().max(500).optional(),
+    channels: z.array(notificationChannelEnum).min(1).default(['in_app']),
   }),
 });
 
-// List notifications schema
+// ============================================================================
+// List / Get Schemas
+// ============================================================================
+
 export const listNotificationsSchema = z.object({
   query: z.object({
     type: notificationTypeEnum.optional(),
@@ -62,44 +91,50 @@ export const listNotificationsSchema = z.object({
     channel: notificationChannelEnum.optional(),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    limit: z.string().regex(/^\d+$/).transform(Number).default('20'),
+    ...paginationSchema.shape,
   }),
 });
 
-// Get notification schema
 export const getNotificationSchema = z.object({
   params: z.object({
     notificationId: uuidSchema,
   }),
 });
 
-// Mark as read schema
+// ============================================================================
+// Read Status Schemas
+// ============================================================================
+
 export const markAsReadSchema = z.object({
   params: z.object({
     notificationId: uuidSchema,
   }),
 });
 
-// Mark all as read schema
-export const markAllAsReadSchema = z.object({
-  // No specific params needed - uses authenticated user
-});
+// ============================================================================
+// Preference Schemas (aligned with notification_preferences table)
+// ============================================================================
 
-// Update preferences schema
 export const updatePreferencesSchema = z.object({
   body: z.object({
-    sms: z.boolean().optional(),
-    whatsapp: z.boolean().optional(),
-    email: z.boolean().optional(),
-    push: z.boolean().optional(),
-    appointmentReminders: z.boolean().optional(),
-    paymentAlerts: z.boolean().optional(),
-    promotions: z.boolean().optional(),
+    push_enabled: z.boolean().optional(),
+    sms_enabled: z.boolean().optional(),
+    whatsapp_enabled: z.boolean().optional(),
+    email_enabled: z.boolean().optional(),
+    appointment_reminders: z.boolean().optional(),
+    payment_updates: z.boolean().optional(),
+    order_updates: z.boolean().optional(),
+    promotional: z.boolean().optional(),
+    quiet_hours_enabled: z.boolean().optional(),
+    quiet_start: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+    quiet_end: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
   }),
 });
 
-// Register device schema
+// ============================================================================
+// Device Token Schemas (aligned with device_tokens table)
+// ============================================================================
+
 export const registerDeviceSchema = z.object({
   body: z.object({
     token: z.string().min(1).max(500),
@@ -107,18 +142,21 @@ export const registerDeviceSchema = z.object({
   }),
 });
 
-// Unregister device schema
 export const unregisterDeviceSchema = z.object({
   params: z.object({
     deviceId: uuidSchema,
   }),
 });
 
-// Export types
+// ============================================================================
+// Exported Types
+// ============================================================================
+
 export type SendNotificationInput = z.infer<typeof sendNotificationSchema>['body'];
 export type SendBulkNotificationInput = z.infer<typeof sendBulkNotificationSchema>['body'];
 export type ListNotificationsInput = z.infer<typeof listNotificationsSchema>['query'];
 export type UpdatePreferencesInput = z.infer<typeof updatePreferencesSchema>['body'];
 export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>['body'];
+
 
 

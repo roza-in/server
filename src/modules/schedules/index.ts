@@ -1,11 +1,11 @@
-// Re-export types (avoid duplicates from validator)
+// Re-export types
 export type {
     DayOfWeek,
     ConsultationType,
     ScheduleOverrideType,
-    DoctorSchedule,
-    ScheduleOverride,
-    AppointmentSlot,
+    DoctorScheduleDTO,
+    ScheduleOverrideDTO,
+    AppointmentSlotDTO,
     WeeklySchedule,
     AvailableSlot,
 } from './schedule.types.js';
@@ -26,6 +26,9 @@ export {
 // Export services
 export { scheduleService } from './schedule.service.js';
 export { slotService } from './slot.service.js';
+
+// Export routes
+export { scheduleRoutes } from './schedule.routes.js';
 
 // Export controller functions
 export {

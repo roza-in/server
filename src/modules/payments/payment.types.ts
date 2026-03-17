@@ -1,87 +1,85 @@
 import type {
   PaymentStatus,
   PaymentMethod,
+  PaymentType,
   RefundStatus,
+  RefundReason,
   SettlementStatus,
 } from '../../types/database.types.js';
 
 /**
- * Payment Module Types - Extended from database schema
+ * Payment Module Types - Aligned with DB schema (005_payments_refunds.sql)
  */
 
 // ============================================================================
 // Payment Types
 // ============================================================================
 
-export interface Payment {
+export interface PaymentListItem {
   id: string;
+  payment_number: string | null;
   appointment_id: string | null;
+  payment_type: PaymentType;
+  total_amount: number;
+  status: PaymentStatus;
+  payment_method: PaymentMethod;
+  patient_name: string | null;
+  hospital_name: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface PaymentWithDetails {
+  id: string;
+  payment_number: string | null;
+  payment_type: PaymentType;
+  appointment_id: string | null;
+  medicine_order_id: string | null;
   payer_user_id: string;
-  doctor_id: string | null; // Does not exist in schema, but leaving for now if mapped
   hospital_id: string | null;
-  payment_type: 'consultation' | 'medicine_order' | 'platform_fee'; // matched enum
-  base_amount: number; // added
-  total_amount: number; // renamed from amount
-  net_payable: number; // renamed from doctor_amount
-  // amount: number; // removed or optional alias? Better remove to force fix.
-  // doctor_amount: number; // removed
-  // hospital_amount: number; // removed
+  base_amount: number;
   platform_fee: number;
   gst_amount: number;
+  discount_amount: number;
+  total_amount: number;
+  platform_commission: number;
+  commission_rate: number;
+  net_payable: number;
+  total_refunded: number;
   currency: string;
-  status: PaymentStatus;
-  payment_method: PaymentMethod | null;
+  payment_method: PaymentMethod;
+  gateway_provider: string | null;
   gateway_order_id: string | null;
   gateway_payment_id: string | null;
   gateway_signature: string | null;
-  gateway_response: Record<string, any> | null;
-  paid_at: string | null;
+  gateway_response: Record<string, unknown> | null;
+  status: PaymentStatus;
+  status_reason: string | null;
+  initiated_at: string;
+  completed_at: string | null;
+  failed_at: string | null;
+  expired_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface PaymentWithDetails extends Payment {
+  // Joined relations
   appointment?: {
     id: string;
-    booking_id: string;
-    appointment_date: string;
-    start_time: string;
-    // New schema fields
-    appointment_number?: string;
-    scheduled_date?: string;
-    scheduled_start?: string;
-
+    appointment_number: string;
+    scheduled_date: string;
+    scheduled_start: string;
     consultation_type: string;
   } | null;
-  patient?: {
+  payer?: {
     id: string;
     name: string | null;
-    phone: string;
+    phone: string | null;
     email: string | null;
-  };
-  doctor?: {
-    id: string;
-    name: string | null;
   } | null;
   hospital?: {
     id: string;
     name: string;
   } | null;
-  refund?: Refund | null;
-}
-
-export interface PaymentListItem {
-  id: string;
-  appointment_id: string | null;
-  payment_type: string;
-  amount: number;
-  status: PaymentStatus;
-  payment_method: PaymentMethod | null;
-  patient_name: string | null;
-  doctor_name: string | null;
-  hospital_name: string | null;
-  paid_at: string | null;
-  created_at: string;
+  refunds?: Refund[];
 }
 
 // ============================================================================
@@ -90,16 +88,25 @@ export interface PaymentListItem {
 
 export interface Refund {
   id: string;
+  refund_number: string | null;
   payment_id: string;
-  appointment_id: string | null;
-  amount: number;
-  reason: string | null;
+  refund_amount: number;
+  reason: RefundReason;
+  reason_details: string | null;
+  cancellation_fee: number;
+  policy_applied: string | null;
   status: RefundStatus;
-  refund_policy: 'full' | 'partial_75' | 'partial_50' | 'none';
+  status_reason: string | null;
   initiated_by: string;
+  initiated_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
   gateway_refund_id: string | null;
-  processed_at: string | null;
+  gateway_response: Record<string, unknown> | null;
+  completed_at: string | null;
+  idempotency_key: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface RefundInput {
@@ -114,28 +121,35 @@ export interface RefundInput {
 
 export interface Settlement {
   id: string;
-  hospital_id: string | null;
-  doctor_id: string | null;
+  settlement_number: string | null;
+  entity_type: string;
+  entity_id: string;
   period_start: string;
   period_end: string;
-  total_amount: number;
-  platform_fee: number;
-  net_amount: number;
-  transaction_count: number;
+  gross_amount: number;
+  refunds_amount: number;
+  commission_amount: number;
+  tds_amount: number;
+  other_deductions: number;
+  deduction_details: Record<string, unknown> | null;
+  net_payable: number;
+  payout_account_id: string | null;
+  payment_mode: string | null;
+  utr_number: string | null;
   status: SettlementStatus;
-  bank_reference: string | null;
-  settled_at: string | null;
+  status_reason: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  processed_at: string | null;
+  invoice_url: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface SettlementWithDetails extends Settlement {
-  hospital?: {
+  entity?: {
     id: string;
     name: string;
-  } | null;
-  doctor?: {
-    id: string;
-    name: string | null;
   } | null;
   payments?: PaymentListItem[];
 }
@@ -144,22 +158,24 @@ export interface SettlementWithDetails extends Settlement {
 // Credits Types
 // ============================================================================
 
-export interface UserCredits {
+export interface PatientCredit {
   id: string;
   user_id: string;
   balance: number;
   lifetime_earned: number;
-  lifetime_used: number;
+  lifetime_redeemed: number;
   created_at: string;
   updated_at: string;
 }
 
 export interface CreditTransaction {
   id: string;
+  credit_account_id: string;
   user_id: string;
+  type: string;
   amount: number;
-  type: 'earned' | 'used' | 'expired' | 'refunded';
-  source: 'referral' | 'promotion' | 'refund' | 'payment' | 'admin';
+  balance_after: number;
+  reference_type: string | null;
   reference_id: string | null;
   description: string | null;
   expires_at: string | null;
@@ -169,8 +185,10 @@ export interface CreditTransaction {
 export interface AddCreditsInput {
   user_id: string;
   amount: number;
-  source: 'referral' | 'promotion' | 'refund' | 'admin';
+  type: string;
   description?: string;
+  reference_type?: string;
+  reference_id?: string;
   expires_at?: string;
 }
 
@@ -187,7 +205,7 @@ export interface RazorpayOrder {
   currency: string;
   receipt: string;
   status: 'created' | 'attempted' | 'paid';
-  notes: Record<string, any>;
+  notes: Record<string, unknown>;
   created_at: number;
 }
 
@@ -205,7 +223,7 @@ export interface RazorpayPayment {
   vpa: string | null;
   email: string;
   contact: string;
-  notes: Record<string, any>;
+  notes: Record<string, unknown>;
   fee: number;
   tax: number;
   error_code: string | null;
@@ -219,7 +237,7 @@ export interface RazorpayRefund {
   amount: number;
   currency: string;
   payment_id: string;
-  notes: Record<string, any>;
+  notes: Record<string, unknown>;
   status: 'pending' | 'processed' | 'failed';
   speed_requested: 'normal' | 'optimum';
   speed_processed: 'normal' | 'instant';
@@ -308,12 +326,12 @@ export interface PaymentFilters {
   doctor_id?: string;
   hospital_id?: string;
   status?: PaymentStatus | PaymentStatus[];
-  payment_type?: string;
+  payment_type?: PaymentType;
   date_from?: string;
   date_to?: string;
   page?: number;
   limit?: number;
-  sort_by?: 'created_at' | 'amount' | 'paid_at';
+  sort_by?: 'created_at' | 'total_amount' | 'completed_at';
   sort_order?: 'asc' | 'desc';
 }
 
@@ -327,8 +345,8 @@ export interface RefundFilters {
 }
 
 export interface SettlementFilters {
-  hospital_id?: string;
-  doctor_id?: string;
+  entity_type?: string;
+  entity_id?: string;
   status?: SettlementStatus;
   period_from?: string;
   period_to?: string;
@@ -343,8 +361,7 @@ export interface SettlementFilters {
 export interface PaymentStats {
   total_revenue: number;
   platform_fees: number;
-  doctor_payouts: number;
-  hospital_payouts: number;
+  net_payable: number;
   total_refunds: number;
   transaction_count: number;
   pending_settlements: number;

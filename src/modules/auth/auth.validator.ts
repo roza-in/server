@@ -70,7 +70,7 @@ export const registerPatientSchema = z.object({
       .min(2, 'Name must be at least 2 characters')
       .max(255, 'Name must not exceed 255 characters')
       .trim(),
-    email: emailSchema,
+    email: emailSchema.optional(),
     password: passwordSchema.optional(),
     gender: genderSchema.optional(),
     dateOfBirth: dateSchema.optional(),

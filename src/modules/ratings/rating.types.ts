@@ -1,69 +1,61 @@
 // ============================================================================
 // Rating Module Types
+// Re-exports canonical Rating from database.types.ts
 // ============================================================================
 
-export interface Rating {
+import type { Rating as DBRating } from '../../types/database.types.js';
+
+/** Canonical Rating type from DB */
+export type Rating = DBRating;
+
+/** Rating with joined relations */
+export interface RatingWithRelations extends Rating {
+    patient?: { name: string; avatar_url: string | null } | null;
+    appointment?: { id: string; scheduled_date: string } | null;
+}
+
+/** Rating list item (select projection) */
+export interface RatingListItem {
     id: string;
-    appointment_id: string;
-    patient_id: string;
-    doctor_id: string;
-    hospital_id: string | null;
-    overall_rating: number;
+    rating: number;
+    review: string | null;
     doctor_rating: number | null;
     hospital_rating: number | null;
     wait_time_rating: number | null;
-    staff_behavior_rating: number | null;
-    consultation_quality_rating: number | null;
-    review: string | null;
-    is_anonymous: boolean;
-    doctor_response: string | null;
-    doctor_responded_at: string | null;
-    hospital_response: string | null;
-    hospital_responded_at: string | null;
-    is_visible: boolean;
-    is_verified: boolean;
-    helpful_count: number;
     created_at: string;
-    updated_at: string;
-}
-
-export interface RatingListItem {
-    id: string;
-    overall_rating: number;
-    review: string | null;
-    is_anonymous: boolean;
     patient_name: string | null;
-    created_at: string;
-    doctor_response: string | null;
 }
 
+/** Filters for listing ratings */
 export interface RatingFilters {
-    doctorId?: string;
-    hospitalId?: string;
-    patientId?: string;
-    minRating?: number;
-    maxRating?: number;
-    isVisible?: boolean;
+    doctor_id?: string;
+    hospital_id?: string;
+    patient_id?: string;
+    min_rating?: number;
+    max_rating?: number;
+    is_visible?: boolean;
     page?: number;
     limit?: number;
 }
 
+/** Input for creating a rating */
 export interface CreateRatingInput {
     appointment_id: string;
-    overall_rating: number;
-    doctor_rating?: number;
-    hospital_rating?: number;
-    wait_time_rating?: number;
-    staff_behavior_rating?: number;
-    consultation_quality_rating?: number;
-    review?: string;
-    is_anonymous?: boolean;
+    rating: number;
+    review?: string | null;
+    doctor_rating?: number | null;
+    hospital_rating?: number | null;
+    wait_time_rating?: number | null;
 }
 
-export interface RespondToRatingInput {
-    response: string;
+/** Input for flagging/moderating a rating */
+export interface ModerateRatingInput {
+    is_visible?: boolean;
+    is_flagged?: boolean;
+    flag_reason?: string | null;
 }
 
+/** Doctor rating stats (computed) */
 export interface RatingStats {
     average_rating: number;
     total_ratings: number;

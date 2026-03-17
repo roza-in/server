@@ -77,7 +77,7 @@ declare global {
       requestId?: string;
       startTime?: number;
       idempotencyKey?: string;
-      auditAction?: string;
+      auditAction?: import('./database.types.js').AuditAction;
     }
   }
 }

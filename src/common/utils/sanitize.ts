@@ -1,5 +1,5 @@
 /**
- * ROZX Healthcare Platform - Input Sanitization Utilities
+ * Rozx Healthcare Platform - Input Sanitization Utilities
  * 
  * Security utilities for sanitizing user input before use in database queries.
  */

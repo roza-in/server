@@ -1,24 +1,31 @@
-// @ts-nocheck
 import { z } from 'zod';
-import { uuidSchema } from '../../common/validators.js';
+import { uuidSchema, dateSchema, paginationSchema } from '../../common/validators.js';
 
 /**
- * Payment validators using Zod
+ * Payment validators using Zod — aligned with DB schema
  */
 
 // Create order schema
 export const createOrderSchema = z.object({
   body: z.object({
-    appointmentId: uuidSchema,
+    appointment_id: uuidSchema,
   }),
 });
 
-// Verify payment schema
+// Verify payment schema (Razorpay)
 export const verifyPaymentSchema = z.object({
   body: z.object({
-    razorpayOrderId: z.string().min(1),
-    razorpayPaymentId: z.string().min(1),
-    razorpaySignature: z.string().min(1),
+    gateway_order_id: z.string().min(1),
+    gateway_payment_id: z.string().min(1),
+    gateway_signature: z.string().optional(),
+    provider: z.enum(['razorpay', 'cashfree']).default('razorpay'),
+  }),
+});
+
+// Cashfree callback schema
+export const cashfreeCallbackSchema = z.object({
+  body: z.object({
+    orderId: z.string().min(1),
   }),
 });
 
@@ -29,16 +36,26 @@ export const getPaymentSchema = z.object({
   }),
 });
 
+// Get payment config schema
+export const getPaymentConfigSchema = z.object({
+  params: z.object({
+    appointmentId: uuidSchema,
+  }),
+});
+
 // List payments schema
 export const listPaymentsSchema = z.object({
   query: z.object({
-    patientId: uuidSchema.optional(),
-    hospitalId: uuidSchema.optional(),
-    status: z.enum(['pending', 'captured', 'refunded', 'failed']).optional(),
-    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    limit: z.string().regex(/^\d+$/).transform(Number).default('20'),
+    patient_id: uuidSchema.optional(),
+    hospital_id: uuidSchema.optional(),
+    status: z.enum([
+      'pending', 'processing', 'completed', 'failed',
+      'refunded', 'partially_refunded', 'expired', 'disputed',
+    ]).optional(),
+    payment_type: z.enum(['consultation', 'medicine_order', 'platform_fee']).optional(),
+    date_from: dateSchema.optional(),
+    date_to: dateSchema.optional(),
+    ...paginationSchema.shape,
   }),
 });
 
@@ -48,12 +65,22 @@ export const refundPaymentSchema = z.object({
     paymentId: uuidSchema,
   }),
   body: z.object({
-    amount: z.number().positive().optional(), // For partial refund
-    reason: z.string().max(500).optional(),
+    refund_type: z.enum(['full', 'partial']).default('full'),
+    amount: z.number().positive().optional(),
+    reason: z.string().max(500),
+    speed: z.enum(['normal', 'optimum']).default('normal'),
   }),
 });
 
-// Webhook schema
+// Stats query schema
+export const paymentStatsSchema = z.object({
+  query: z.object({
+    date_from: dateSchema.optional(),
+    date_to: dateSchema.optional(),
+  }),
+});
+
+// Webhook schema (Razorpay)
 export const razorpayWebhookSchema = z.object({
   body: z.object({
     event: z.string(),
@@ -80,10 +107,10 @@ export const razorpayWebhookSchema = z.object({
   }),
 });
 
-// Export types
+// Export inferred types
 export type CreateOrderInput = z.infer<typeof createOrderSchema>['body'];
 export type VerifyPaymentInput = z.infer<typeof verifyPaymentSchema>['body'];
 export type ListPaymentsInput = z.infer<typeof listPaymentsSchema>['query'];
-export type RefundPaymentInput = z.infer<typeof refundPaymentSchema>;
-
-
+export type RefundPaymentInput = z.infer<typeof refundPaymentSchema>['body'];
+export type PaymentStatsInput = z.infer<typeof paymentStatsSchema>['query'];
+export type CashfreeCallbackValidated = z.infer<typeof cashfreeCallbackSchema>['body'];

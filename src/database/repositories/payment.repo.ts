@@ -1,5 +1,5 @@
 import { BaseRepository } from '../../common/repositories/base.repo.js';
-import type { Payment } from '../../modules/payments/payment.types.js';
+import type { Payment } from '../../types/database.types.js';
 
 export class PaymentRepository extends BaseRepository<Payment> {
     constructor() {
@@ -74,10 +74,15 @@ export class PaymentRepository extends BaseRepository<Payment> {
         date_from?: string;
         date_to?: string;
     }): Promise<{ completed: Payment[]; refunded: Payment[] }> {
-        let query = this.getQuery().select('*');
+        // payments has no doctor_id column — filter via appointment join if doctor_id provided
+        const selectStr = filters.doctor_id
+            ? '*, appointment:appointments!inner(doctor_id)'
+            : '*';
+
+        let query = this.getQuery().select(selectStr);
 
         if (filters.hospital_id) query = query.eq('hospital_id', filters.hospital_id);
-        if (filters.doctor_id) query = query.eq('doctor_id', filters.doctor_id);
+        if (filters.doctor_id) query = query.eq('appointment.doctor_id', filters.doctor_id);
         if (filters.date_from) query = query.gte('created_at', filters.date_from);
         if (filters.date_to) query = query.lte('created_at', filters.date_to);
 
@@ -85,10 +90,10 @@ export class PaymentRepository extends BaseRepository<Payment> {
 
         if (error) throw error;
 
-        const payments = data || [];
+        const payments = (data || []) as unknown as Payment[];
         return {
-            completed: payments.filter((p: Payment) => p.status === 'completed'),
-            refunded: payments.filter((p: Payment) => p.status === 'refunded'),
+            completed: payments.filter((p) => p.status === 'completed'),
+            refunded: payments.filter((p) => p.status === 'refunded'),
         };
     }
 }

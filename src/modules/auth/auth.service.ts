@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { env } from '../../config/env.js';
-import { generateOTP } from '../../common/utils/crypto.js';
+import { generateOTP, hashString } from '../../common/utils/crypto.js';
 import { generateTokenPair, verifyRefreshToken } from '../../common/utils/jwt.js';
 import { parseDurationToSeconds } from '../../common/utils/date.js';
 import { logger } from '../../config/logger.js';
@@ -11,11 +11,11 @@ import { hospitalRepository } from '../../database/repositories/hospital.repo.js
 import type { TokenPayload } from '../../types/jwt.js';
 import { UserNotFoundError, UserAlreadyExistsError, OTPInvalidError, BadRequestError, UnauthorizedError } from '../../common/errors/index.js';
 import type { AuthTokens, LoginResponse, OTPSendResponse, UserProfile, PasswordLoginInput } from './auth.types.js';
-import type { SendOTPInput, VerifyOTPInput, RegisterPatientInput, RegisterHospitalInput, RefreshTokenInput, UpdateProfileInput, CompleteUserRegistrationInput, RegisterHospitalProfileInput, RegisterHospitalComplianceInput, RegisterHospitalAddressInput } from './auth.validator.js';
+import type { SendOTPInput, VerifyOTPInput, RegisterPatientInput, RegisterHospitalInput, RefreshTokenInput, UpdateProfileInput, CompleteUserRegistrationInput, RegisterHospitalProfileInput, RegisterHospitalComplianceInput, RegisterHospitalAddressInput, ResetPasswordInput } from './auth.validator.js';
 import type { OTPPurpose, UserSession, UserRole } from '../../types/database.types.js';
 import { getRedisClient, checkRateLimit } from '../../config/redis.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
-import { NotificationChannel, NotificationPurpose } from '../../integrations/notification/notification.types.js';
+import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';
 import { formatUserProfile, mapUserToProfile } from '../users/user.mapper.js';
 
 const SESSION_EXPIRES_DAYS = 30;
@@ -26,11 +26,12 @@ const SESSION_EXPIRES_DAYS = 30;
  */
 class AuthService {
   private log = logger.child('AuthService');
-  private readonly saltRounds = 10;
+  private readonly saltRounds = 12; // S3: increased from 10 for stronger password hashing
 
   /** ------ Send OTP ------ */
   async sendOTP(data: SendOTPInput): Promise<OTPSendResponse> {
-    const { phone, email, purpose, sessionId } = data;
+    const { phone, purpose, sessionId } = data;
+    let { email } = data;
 
     if (!phone && !email) {
       throw new BadRequestError("Phone or email is required for OTP");
@@ -38,6 +39,19 @@ class AuthService {
 
     if (!sessionId) {
       throw new BadRequestError("Verification session is required");
+    }
+
+    // If only phone is provided, resolve the user's email for delivery.
+    // OTP is still stored/verified by phone — email is only used for sending.
+    if (phone && !email) {
+      try {
+        const user = await userRepository.findByPhone(phone);
+        if (user && (user as any).email) {
+          email = (user as any).email;
+        }
+      } catch {
+        // Ignore — user may not exist yet (registration)
+      }
     }
 
     const redis = getRedisClient();
@@ -62,13 +76,17 @@ class AuthService {
       ? `otp:phone:${phone}`
       : `otp:email:${email}`;
 
+    // Store hashed OTP — never persist plaintext OTP in Redis
+    const otpHash = hashString(otp);
+
     await redis?.setex(
       redisKey,
       ttlSeconds,
       JSON.stringify({
-        otp,
+        otp: otpHash,
         sessionId,
         purpose,
+        attempts: 0,
       })
     );
 
@@ -80,7 +98,9 @@ class AuthService {
 
     await notificationService.send({
       purpose: purpose === "login" ? NotificationPurpose.OTP_LOGIN : NotificationPurpose.OTP_REGISTRATION,
-      // channel: NotificationChannel.SMS, // Allow auto-fallback (WhatsApp -> SMS -> Email)
+      // Force email channel until WhatsApp/SMS templates are approved.
+      // Once approved, remove the channel override to enable auto-fallback (WhatsApp → SMS → Email).
+      channel: NotificationChannel.Email,
       phone: phone || undefined,
       email: email || undefined,
       variables: {
@@ -112,9 +132,24 @@ class AuthService {
     }
 
     const parsed = typeof otpData === 'string' ? JSON.parse(otpData) : otpData;
-    const { otp: storedOtp, purpose: storedPurpose } = parsed;
+    const { otp: storedOtpHash, purpose: storedPurpose, attempts = 0 } = parsed;
 
-    if (storedOtp !== otp) {
+    // C2: Enforce attempt limiting
+    const maxAttempts = env.OTP_MAX_ATTEMPTS || 3;
+    if (attempts >= maxAttempts) {
+      await redis?.del(redisKey);
+      throw new OTPInvalidError('Too many invalid attempts. Please request a new OTP.');
+    }
+
+    // Compare hashed OTP
+    if (storedOtpHash !== hashString(otp)) {
+      // Increment attempt counter
+      const ttl = await redis?.ttl(redisKey);
+      await redis?.setex(
+        redisKey,
+        ttl && ttl > 0 ? ttl : 300,
+        JSON.stringify({ ...parsed, attempts: attempts + 1 })
+      );
       throw new OTPInvalidError('Invalid OTP code');
     }
 
@@ -143,9 +178,24 @@ class AuthService {
 
     // Upstash client returns parsed JSON if it was stored as JSON, or string
     const parsed = typeof otpData === 'string' ? JSON.parse(otpData) : otpData;
-    const { otp, purpose: storedPurpose } = parsed;
+    const { otp: storedOtpHash, purpose: storedPurpose, attempts = 0 } = parsed;
 
-    if (otp !== code || storedPurpose !== purpose) {
+    // C2: Enforce attempt limiting
+    const maxAttempts = env.OTP_MAX_ATTEMPTS || 3;
+    if (attempts >= maxAttempts) {
+      await redis?.del(redisKey);
+      throw new OTPInvalidError('Too many invalid attempts. Please request a new OTP.');
+    }
+
+    // Compare hashed OTP and purpose
+    if (storedOtpHash !== hashString(code) || storedPurpose !== purpose) {
+      // Increment attempt counter
+      const ttl = await redis?.ttl(redisKey);
+      await redis?.setex(
+        redisKey,
+        ttl && ttl > 0 ? ttl : 300,
+        JSON.stringify({ ...parsed, attempts: attempts + 1 })
+      );
       throw new OTPInvalidError('Invalid OTP code');
     }
 
@@ -175,7 +225,9 @@ class AuthService {
     const sessionData = await sessionRepository.create({
       id: sessionId,
       user_id: userId,
-      refresh_token_hash: refreshToken,
+      refresh_token_hash: hashString(refreshToken),
+      token_family: sessionId, // Each login creates a new token family for rotation tracking
+      previous_refresh_token_hash: null,
       device_id: deviceInfo?.deviceId || null,
       device_type: deviceInfo?.deviceType || null,
       device_name: deviceInfo?.deviceName || null,
@@ -257,12 +309,13 @@ class AuthService {
       throw new UnauthorizedError('Account is inactive');
     }
 
-    // Update last login
+    // Update last login + increment login_count
     await userRepository.update(user.id, {
       last_login_at: new Date().toISOString(),
+      login_count: (user.login_count || 0) + 1,
       phone_verified: !!phone || user.phone_verified,
       email_verified: !!email || user.email_verified,
-    });
+    } as any);
 
     // Get hospital/doctor IDs (check hospitals, doctors, or staff for hospital association)
     const hospitalId = user.hospitals?.[0]?.id || user.doctors?.[0]?.hospital_id || user.staff?.[0]?.hospital_id;
@@ -289,18 +342,20 @@ class AuthService {
     // Send Login Alert
     try {
       if (user.phone || user.email) {
+        const loginDevice = deviceInfo?.deviceName || "Unknown Device";
+        const loginTime = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+        const loginIp = ipAddress || "Unknown IP";
         await notificationService.send({
           purpose: NotificationPurpose.LOGIN_ALERT,
           phone: user.phone,
           email: user.email,
           variables: {
-            device: deviceInfo?.deviceName || "Unknown Device",
-            time: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-            ip: ipAddress || "Unknown IP",
+            device: loginDevice,
+            time: loginTime,
+            ip: loginIp,
           },
-          // Template has no variables
-          // whatsappValues: [],
-
+          // rozx_login_alert: {{1}}=device {{2}}=time {{3}}=ip
+          whatsappValues: [loginDevice, loginTime, loginIp],
         });
       }
     } catch (error) {
@@ -349,8 +404,9 @@ class AuthService {
 
     await userRepository.update(user.id, {
       last_login_at: new Date().toISOString(),
+      login_count: (user.login_count || 0) + 1,
       email_verified: true,
-    });
+    } as any);
 
     // Check hospitals, doctors, or staff for hospital association
     const hospitalId = user.hospitals?.[0]?.id || user.doctors?.[0]?.hospital_id || user.staff?.[0]?.hospital_id;
@@ -431,6 +487,9 @@ class AuthService {
 
     const tokens = generateTokenPair(tokenPayload);
     await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
+
+    // Send welcome email (fire-and-forget)
+    this.sendWelcomeEmail(user.name || 'there', user.email, role === 'hospital' ? 'hospital' : 'patient');
 
     return {
       user: formatUserProfile(user),
@@ -588,6 +647,9 @@ class AuthService {
     // Create session with matching sessionId
     await this.createSession(user.id, tokens.refreshToken, sessionId, deviceInfo, ipAddress, userAgent);
 
+    // Send welcome email (fire-and-forget)
+    this.sendWelcomeEmail(user.name || name, user.email || email, 'patient');
+
     return {
       user: formatUserProfile(user),
       tokens: {
@@ -701,6 +763,9 @@ class AuthService {
     // Manually attach hospital to user for the response (since we just created it)
     user.hospitals = [hospital_record];
 
+    // Send welcome email (fire-and-forget)
+    this.sendWelcomeEmail(user.name || name, user.email || email, 'hospital');
+
     return {
       user: formatUserProfile(user, hospital_record.id),
       tokens: {
@@ -713,17 +778,110 @@ class AuthService {
   }
 
   // =================================================================
+  // Password Reset (C7 Fix)
+  // =================================================================
+
+  /**
+   * Request a password reset — sends OTP to user's phone
+   */
+  async requestPasswordReset(phone: string): Promise<{ message: string; expiresIn: number }> {
+    // Verify user exists
+    const user = await userRepository.findByPhone(phone);
+    if (!user) {
+      // Don't reveal whether user exists — return same response
+      return { message: 'If an account exists, a password reset OTP has been sent.', expiresIn: (env.OTP_EXPIRY_MINUTES || 5) * 60 };
+    }
+
+    // Send OTP with password_reset purpose
+    const result = await this.sendOTP({
+      phone,
+      purpose: 'password_reset' as any,
+      sessionId: crypto.randomUUID(),
+    });
+
+    return { message: 'If an account exists, a password reset OTP has been sent.', expiresIn: result.expiresIn };
+  }
+
+  /**
+   * Reset password using OTP verification
+   */
+  async resetPassword(data: ResetPasswordInput): Promise<{ message: string }> {
+    const { phone, otp, newPassword } = data;
+
+    // Verify OTP with password_reset purpose
+    await this.verifyOTP(phone, otp, 'password_reset' as any);
+
+    // Find user
+    const user = await userRepository.findByPhone(phone);
+    if (!user) {
+      throw new UserNotFoundError();
+    }
+
+    // Hash new password
+    const passwordHash = await this.hashPassword(newPassword);
+
+    // Update password
+    await userRepository.update(user.id, {
+      password_hash: passwordHash,
+      updated_at: new Date().toISOString(),
+    } as any);
+
+    // Invalidate all existing sessions (force re-login)
+    await this.revokeAllSessions(user.id);
+
+    this.log.info(`Password reset successful for user ${user.id}`);
+
+    return { message: 'Password has been reset successfully. Please login with your new password.' };
+  }
+
+  // =================================================================
   // Helpers
   // =================================================================
 
+  /**
+   * Send a welcome email after registration (fire-and-forget).
+   * Never throws — logs errors silently so registration is not affected.
+   */
+  private sendWelcomeEmail(name: string, email: string | null | undefined, role: 'patient' | 'hospital' | 'doctor'): void {
+    if (!email) return;
 
+    const purposeMap = {
+      patient: NotificationPurpose.WELCOME_PATIENT,
+      hospital: NotificationPurpose.WELCOME_HOSPITAL,
+      doctor: NotificationPurpose.WELCOME_DOCTOR,
+    } as const;
+
+    // Build role-specific subdomain URL based on environment:
+    //   local:       http://{role}.rozx.local:3000
+    //   development: https://{role}.dev.rozx.in
+    //   production:  https://{role}.rozx.in
+    const cookieDomain = env.COOKIE_DOMAIN || '.rozx.in';
+    const baseDomain = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain;
+    const isLocal = env.NODE_ENV === 'local';
+    const protocol = isLocal ? 'http' : 'https';
+    const port = isLocal ? ':3000' : '';
+    const appUrl = `${protocol}://${role}.${baseDomain}${port}`;
+
+    notificationService.send({
+      purpose: purposeMap[role],
+      channel: NotificationChannel.Email,
+      email,
+      variables: { name, app_url: appUrl },
+      whatsappValues: [name],
+    }).catch(err => {
+      this.log.error('Failed to send welcome email', { email, role, error: err instanceof Error ? err.message : String(err) });
+    });
+  }
 
   // =================================================================
   // Token Management
   // =================================================================
 
   /**
-   * Refresh access token using refresh token
+   * Refresh access token using refresh token with rotation & reuse detection.
+   * - Each refresh rotates the token: old hash is stored as previous_refresh_token_hash.
+   * - If a consumed (rotated-out) token is replayed, the entire session family is revoked
+   *   to mitigate token theft.
    */
   async refreshAccessToken(data: RefreshTokenInput, deviceInfo?: any, ipAddress?: string, userAgent?: string): Promise<AuthTokens & { expiresIn: number }> {
     const { refreshToken: token } = data;
@@ -738,10 +896,28 @@ class AuthService {
       throw new UnauthorizedError('Invalid refresh token');
     }
 
-    // Check if session exists and is active
-    const session = await sessionRepository.findActiveByRefreshToken(token);
+    const tokenHash = hashString(token);
+
+    // Check if session exists and is active (lookup by hash)
+    const session = await sessionRepository.findActiveByRefreshToken(tokenHash);
 
     if (!session) {
+      // Token not found as current — check if it was already rotated out (reuse detection)
+      const compromisedSession = await sessionRepository.detectTokenReuse(tokenHash);
+      if (compromisedSession) {
+        // Token replay detected! Revoke the entire token family
+        this.log.warn('Refresh token reuse detected — revoking token family', {
+          userId: payload.userId,
+          sessionId: compromisedSession.id,
+          tokenFamily: (compromisedSession as any).token_family,
+        });
+        const family = (compromisedSession as any).token_family;
+        if (family) {
+          await sessionRepository.revokeTokenFamily(family);
+        } else {
+          await sessionRepository.revoke(compromisedSession.id);
+        }
+      }
       throw new UnauthorizedError('Session expired or invalid');
     }
 
@@ -775,9 +951,10 @@ class AuthService {
 
     const tokens = generateTokenPair(tokenPayload);
 
-    // Update session with new refresh token
+    // Rotate: store old hash as previous, update to new hash
     await sessionRepository.update(session.id, {
-      refresh_token_hash: tokens.refreshToken,
+      previous_refresh_token_hash: tokenHash,
+      refresh_token_hash: hashString(tokens.refreshToken),
       last_used_at: new Date().toISOString(),
       device_id: deviceInfo?.deviceId || session.device_id,
       device_type: deviceInfo?.deviceType || session.device_type,
@@ -827,21 +1004,26 @@ class AuthService {
    * Update user profile
    */
   async updateProfile(userId: string, data: UpdateProfileInput): Promise<UserProfile> {
-    const { name, email, avatarUrl, gender, dateOfBirth } = data;
-
     const user = await userRepository.findById(userId);
     if (!user) {
       throw new UserNotFoundError();
     }
 
-    const updatedUser = await userRepository.updateProfile(userId, {
-      name: name,
-      email: email,
-      avatar_url: avatarUrl,
-      gender: gender as any,
-      date_of_birth: dateOfBirth,
-      updated_at: new Date().toISOString(),
-    });
+    // Build update payload — only include fields that are provided
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.email !== undefined) updates.email = data.email;
+    if (data.avatarUrl !== undefined) updates.avatar_url = data.avatarUrl;
+    if (data.gender !== undefined) updates.gender = data.gender;
+    if (data.dateOfBirth !== undefined) updates.date_of_birth = data.dateOfBirth;
+    if (data.bloodGroup !== undefined) updates.blood_group = data.bloodGroup;
+    if (data.address !== undefined) updates.address = data.address;
+    if (data.emergencyContact !== undefined) updates.emergency_contact = data.emergencyContact;
+    if (data.allergies !== undefined) updates.allergies = data.allergies;
+    if (data.chronicConditions !== undefined) updates.medical_conditions = data.chronicConditions;
+
+    const updatedUser = await userRepository.updateProfile(userId, updates as any);
 
     if (!updatedUser) {
       throw new BadRequestError('Failed to update profile');

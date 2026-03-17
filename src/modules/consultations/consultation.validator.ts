@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { z } from 'zod';
 import { uuidSchema } from '../../common/validators.js';
 
@@ -36,7 +35,11 @@ export const updateConsultationNotesSchema = z.object({
     consultationId: uuidSchema,
   }),
   body: z.object({
-    notes: z.string().max(5000),
+    chiefComplaint: z.string().max(1000).optional(),
+    historyOfIllness: z.string().max(2000).optional(),
+    examinationFindings: z.string().max(2000).optional(),
+    diagnosis: z.string().max(2000).optional(),
+    treatmentPlan: z.string().max(5000).optional(),
   }),
 });
 
@@ -46,7 +49,7 @@ export const updateConsultationVitalsSchema = z.object({
     consultationId: uuidSchema,
   }),
   body: z.object({
-    vitals: z.record(z.any()),
+    vitals: z.record(z.string(), z.any()),
   }),
 });
 
@@ -63,11 +66,11 @@ export const listConsultationsSchema = z.object({
     doctorId: uuidSchema.optional(),
     patientId: uuidSchema.optional(),
     appointmentId: uuidSchema.optional(),
-    status: z.enum(['scheduled', 'waiting', 'in_progress', 'completed', 'cancelled']).optional(),
+    status: z.enum(['scheduled', 'waiting', 'in_progress', 'paused', 'completed', 'cancelled', 'failed']).optional(),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    limit: z.string().regex(/^\d+$/).transform(Number).default('20'),
+    page: z.string().regex(/^\d+$/).default('1').transform(Number),
+    limit: z.string().regex(/^\d+$/).default('20').transform(Number),
   }),
 });
 
@@ -81,18 +84,19 @@ const medicationSchema = z.object({
   instructions: z.string().max(500).optional(),
 });
 
-// Create prescription schema
+// Create prescription schema — aligned with DB Prescription table
 export const createPrescriptionSchema = z.object({
   body: z.object({
     consultationId: uuidSchema,
-    appointmentId: uuidSchema,
-    diagnosis: z.string().min(1).max(1000),
-    chiefComplaints: z.string().max(1000).optional(),
-    clinicalNotes: z.string().max(2000).optional(),
+    diagnosis: z.array(z.string().min(1).max(500)).min(1).max(20),
     medications: z.array(medicationSchema).min(1).max(20),
     labTests: z.array(z.string()).max(20).optional(),
-    advice: z.string().max(1000).optional(),
-    followUpDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    imagingTests: z.array(z.string()).max(20).optional(),
+    dietAdvice: z.string().max(1000).optional(),
+    lifestyleAdvice: z.string().max(1000).optional(),
+    generalInstructions: z.string().max(2000).optional(),
+    followUpDays: z.number().int().min(1).max(365).optional(),
+    followUpNotes: z.string().max(1000).optional(),
     validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   }),
 });

@@ -126,7 +126,7 @@ export class UserRepository extends BaseRepository<User> {
             total: data.length,
             patients: data.filter((u: any) => u.role === 'patient').length,
             doctors: data.filter((u: any) => u.role === 'doctor').length,
-            hospitals: data.filter((u: any) => u.role === 'hospital_admin').length,
+            hospitals: data.filter((u: any) => u.role === 'hospital').length,
         };
 
         return stats;

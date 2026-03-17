@@ -5,7 +5,7 @@ import { sendSuccess, sendPaginated, calculatePagination } from '../../common/re
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
-import type { UpdateUserInput, BlockUserInput, ListUsersInput } from './user.validator.js';
+import type { UpdateUserInput, UpdateMeInput, BlockUserInput, ListUsersInput } from './user.validator.js';
 import { userPolicy } from './user.policy.js';
 import { UnauthorizedError } from '../../common/errors/index.js';
 
@@ -84,7 +84,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
  */
 export const updateMe = asyncHandler(async (req: Request, res: Response) => {
     const authUser = (req as AuthenticatedRequest).user;
-    const data = req.body as UpdateUserInput;
+    const data = req.body as UpdateMeInput;
     await userService.update(authUser.userId, data);
     // Return formatted profile
     // Re-fetch to get relation data if needed, or pass updated user if complete

@@ -3,6 +3,8 @@ import type { AuthUser } from '../../types/request.js';
 
 /**
  * Consultation Policy - Authorization rules for consultations
+ * Note: Consultation table has NO doctor_id/patient_id/hospital_id columns.
+ * These must be resolved from the joined appointment relation.
  */
 export class ConsultationPolicy extends BasePolicy<any> {
     /**
@@ -12,9 +14,15 @@ export class ConsultationPolicy extends BasePolicy<any> {
         if (user.role === 'admin') return true;
         if (!consultation) return false;
 
-        const isPatient = user.role === 'patient' && consultation.patient_id === user.userId;
-        const isDoctor = user.role === 'doctor' && (consultation.doctor?.user_id === user.userId || consultation.doctor_id === user.userId);
-        const isHospital = user.role === 'hospital' && consultation.hospital_id === user.hospitalId;
+        // Get IDs from joined appointment (consultation has no direct FK to users/doctors/hospitals)
+        const patientId = consultation.appointment?.patient_id;
+        const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
+        const doctorId = consultation.appointment?.doctor_id;
+        const hospitalId = consultation.appointment?.hospital_id;
+
+        const isPatient = user.role === 'patient' && patientId === user.userId;
+        const isDoctor = user.role === 'doctor' && (doctorUserId === user.userId || doctorId === user.doctorId);
+        const isHospital = (user.role === 'hospital' || user.role === 'reception') && hospitalId === user.hospitalId;
 
         return isPatient || isDoctor || isHospital;
     }
@@ -24,7 +32,9 @@ export class ConsultationPolicy extends BasePolicy<any> {
      */
     canUpdate(user: AuthUser, consultation?: any): boolean {
         if (!consultation) return false;
-        return user.role === 'doctor' && (consultation.doctor?.user_id === user.userId || consultation.doctor_id === user.userId);
+        const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
+        const doctorId = consultation.appointment?.doctor_id;
+        return user.role === 'doctor' && (doctorUserId === user.userId || doctorId === user.doctorId);
     }
 
     /**
@@ -32,7 +42,9 @@ export class ConsultationPolicy extends BasePolicy<any> {
      */
     canCreatePrescription(user: AuthUser, consultation?: any): boolean {
         if (!consultation) return false;
-        return user.role === 'doctor' && (consultation.doctor?.user_id === user.userId || consultation.doctor_id === user.userId);
+        const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
+        const doctorId = consultation.appointment?.doctor_id;
+        return user.role === 'doctor' && (doctorUserId === user.userId || doctorId === user.doctorId);
     }
 }
 

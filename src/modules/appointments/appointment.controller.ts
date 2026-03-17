@@ -3,6 +3,7 @@ import { appointmentService } from './appointment.service.js';
 import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
 import { MESSAGES } from '../../config/constants.js';
+import { ForbiddenError } from '../../common/errors/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type { BookAppointmentInput, ListAppointmentsInput, RescheduleAppointmentInput, CancelAppointmentInput, UpdateAppointmentStatusInput } from './appointment.validator.js';
 
@@ -56,7 +57,20 @@ export const bookAppointment = asyncHandler(async (req: Request, res: Response) 
  */
 export const getAppointment = asyncHandler(async (req: Request, res: Response) => {
   const { appointmentId } = req.params;
+  const user = (req as AuthenticatedRequest).user;
   const appointment = await appointmentService.getById(appointmentId);
+
+  // Ownership check: only related parties can view the appointment
+  if (user.role !== 'admin') {
+    const isPatient = user.role === 'patient' && appointment.patient_id === user.userId;
+    const isDoctor = user.role === 'doctor' && (appointment.doctor_id === user.doctorId || appointment.doctor?.user_id === user.userId);
+    const isHospitalStaff = (user.role === 'hospital' || user.role === 'reception') && appointment.hospital_id === user.hospitalId;
+
+    if (!isPatient && !isDoctor && !isHospitalStaff) {
+      throw new ForbiddenError('You are not authorized to view this appointment');
+    }
+  }
+
   return sendSuccess(res, appointment);
 });
 
@@ -72,7 +86,7 @@ export const listAppointments = asyncHandler(async (req: Request, res: Response)
   const filters: any = { ...query };
   if (user.role === 'patient') filters.patient_id = user.userId;
   else if (user.role === 'doctor') filters.doctor_id = user.doctorId;
-  else if (user.role === 'hospital') filters.hospital_id = user.hospitalId;
+  else if (user.role === 'hospital' || user.role === 'reception') filters.hospital_id = user.hospitalId;
 
   const result = await appointmentService.list(filters);
   return sendPaginated(
@@ -97,7 +111,7 @@ export const getTodayAppointments = asyncHandler(async (req: Request, res: Respo
   const filters: any = { date_from: today, date_to: today };
   if (user.role === 'patient') filters.patient_id = user.userId;
   else if (user.role === 'doctor') filters.doctor_id = user.doctorId;
-  else if (user.role === 'hospital') filters.hospital_id = user.hospitalId;
+  else if (user.role === 'hospital' || user.role === 'reception') filters.hospital_id = user.hospitalId;
 
   const result = await appointmentService.list(filters);
   return sendSuccess(res, result.appointments);

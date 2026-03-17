@@ -6,7 +6,7 @@ import type { OtpCode } from '../../types/database.types.js';
  */
 export class OTPRepository extends BaseRepository<OtpCode> {
     constructor() {
-        super('otps');
+        super('otp_codes');
     }
 
     /**
@@ -15,9 +15,9 @@ export class OTPRepository extends BaseRepository<OtpCode> {
     async findLatestValid(identifier: string, purpose: string): Promise<OtpCode | null> {
         const { data, error } = await this.getQuery()
             .select('*')
-            .or(`phone.eq.${identifier},email.eq.${identifier}`)
+            .eq('identifier', identifier)
             .eq('purpose', purpose)
-            .eq('verified', false)
+            .eq('is_used', false)
             .gt('expires_at', new Date().toISOString())
             .order('created_at', { ascending: false })
             .limit(1)
@@ -36,7 +36,7 @@ export class OTPRepository extends BaseRepository<OtpCode> {
      * Increment attempt counter
      */
     async incrementAttempts(id: string): Promise<void> {
-        const { error } = await this.supabase.rpc('increment_otp_attempts', { otp_id: id });
+        const { error } = await this.supabase.rpc('increment_otp_attempts', { p_otp_id: id });
         if (error) {
             this.log.error(`Error incrementing OTP attempts for ${id}`, error);
         }

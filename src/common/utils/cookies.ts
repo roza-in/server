@@ -26,42 +26,64 @@ function getCookieDomain(): string | undefined {
   return undefined;
 }
 
-export function setTokenCookies(res: Response, accessToken: string, refreshToken: string, opts?: { maxAgeSeconds?: number; refreshMaxAgeSeconds?: number; secure?: boolean; sameSite?: 'lax' | 'strict' | 'none' }) {
+const isProduction = env.NODE_ENV === 'production';
+
+/**
+ * Shared cookie options to guarantee set/clear use identical flags.
+ * Browsers ignore clearCookie if the flags don't match what was set.
+ */
+function baseCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax' as const,      // Must be 'lax' (not 'strict') — SameSite=Strict cookies are NOT
+                                    // sent after cross-site redirect chains (Google → Supabase → app),
+                                    // which breaks the entire OAuth flow. 'lax' sends cookies on
+                                    // top-level GET navigations, which is exactly what OAuth needs.
+    path: '/',
+    domain: getCookieDomain(),
+  };
+}
+
+export function setTokenCookies(
+  res: Response,
+  accessToken: string,
+  refreshToken: string,
+  opts?: { maxAgeSeconds?: number; refreshMaxAgeSeconds?: number; secure?: boolean; sameSite?: 'lax' | 'strict' | 'none' },
+) {
   const accessMaxAge = (opts?.maxAgeSeconds ?? 60 * 60) * 1000; // default 1 hour in ms
   const refreshMaxAge = (opts?.refreshMaxAgeSeconds ?? 60 * 60 * 24 * 30) * 1000; // default 30 days in ms
-  const isProduction = env.NODE_ENV === 'production';
 
-  // Secure cookies require HTTPS. Local dev is HTTP, so must be false.
-  const secure = opts?.secure ?? isProduction;
-  const sameSite = opts?.sameSite ?? 'lax';
-  const domain = getCookieDomain();
+  const base = baseCookieOptions();
 
-  // HttpOnly, Secure cookies set by the server
-  // Domain is set for cross-subdomain auth in production
+  // Allow per-call overrides (e.g. OAuth cross-domain flow may need 'lax')
+  const secure = opts?.secure ?? base.secure;
+  const sameSite = opts?.sameSite ?? base.sameSite;
+
   res.cookie(ACCESS_COOKIE, accessToken, {
-    httpOnly: true,
+    ...base,
     secure,
     sameSite,
-    path: '/',
     maxAge: accessMaxAge,
-    domain, // Enables cookie sharing across *.rozx.in
   });
 
   res.cookie(REFRESH_COOKIE, refreshToken, {
-    httpOnly: true,
+    ...base,
     secure,
     sameSite,
-    path: '/',
     maxAge: refreshMaxAge,
-    domain, // Enables cookie sharing across *.rozx.in
   });
 }
 
+/**
+ * Clear auth cookies — flags MUST match those used in `setTokenCookies`
+ * or the browser will silently ignore the clear instruction.
+ */
 export function clearTokenCookies(res: Response) {
-  const domain = getCookieDomain();
+  const base = baseCookieOptions();
 
-  res.clearCookie(ACCESS_COOKIE, { path: '/', domain });
-  res.clearCookie(REFRESH_COOKIE, { path: '/', domain });
+  res.clearCookie(ACCESS_COOKIE, base);
+  res.clearCookie(REFRESH_COOKIE, base);
 }
 
 export function getTokensFromReq(req: Request): TokenPair {

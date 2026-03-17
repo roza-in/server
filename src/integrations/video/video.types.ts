@@ -1,65 +1,73 @@
-import { z } from 'zod';
-
 /**
- * Token generation payload
+ * Video Integration Types
+ *
+ * Supports multiple providers (Agora, ZegoCloud) via a common interface.
+ * Active provider is admin-switchable via VIDEO_PROVIDER env.
  */
+
+// ── Provider names ──────────────────────────────────────────────────────────
+export type VideoProviderName = 'agora' | 'zegocloud';
+
+// ── Token payload ───────────────────────────────────────────────────────────
 export interface VideoTokenPayload {
-    roomId: string;
-    userId: string;
-    role?: 'host' | 'audience';
-    expirationInSeconds?: number;
+  roomId: string;
+  userId: string;
+  role?: 'host' | 'audience';
+  expirationInSeconds?: number;
 }
 
-/**
- * Available video provider names
- */
-export const VideoProviderNameSchema = z.enum(['agora', 'zegocloud']);
-export type VideoProviderName = z.infer<typeof VideoProviderNameSchema>;
+// ── Client config (returned to frontend for SDK init) ───────────────────────
+export interface VideoClientConfig {
+  provider: VideoProviderName;
+  appId: string | number;
+}
 
-/**
- * Video provider interface
- */
+// ── Provider interface ──────────────────────────────────────────────────────
 export interface VideoProvider {
-    name: string;
-    generateToken(payload: VideoTokenPayload): Promise<string>;
-    createRoom?(roomId: string): Promise<any>;
-    isConfigured(): boolean;
+  readonly name: VideoProviderName;
+
+  /** Generate an RTC token for video calls */
+  generateToken(payload: VideoTokenPayload): Promise<string>;
+
+  /** Check if the provider has its required credentials configured */
+  isConfigured(): boolean;
+
+  /** Return the client-side app ID for SDK initialization */
+  getClientConfig(): { appId: string | number };
+
+  /** Optionally create a room resource on the provider side */
+  createRoom?(roomId: string): Promise<any>;
 }
 
-/**
- * Provider status for health checks/admin
- */
+// ── Provider status (admin dashboard) ───────────────────────────────────────
 export interface VideoProviderStatus {
-    name: VideoProviderName;
-    enabled: boolean;
-    isActive: boolean;
-    configured: boolean;
+  name: VideoProviderName;
+  enabled: boolean;
+  isActive: boolean;
+  configured: boolean;
 }
 
-/**
- * Room session info
- */
+// ── Room session info ───────────────────────────────────────────────────────
 export interface VideoRoomSession {
-    roomId: string;
-    channelName: string;
-    consultationId: string;
-    doctorUserId: string;
-    patientUserId: string;
-    doctorToken?: string;
-    patientToken?: string;
-    provider: VideoProviderName;
-    createdAt: string;
-    expiresAt: string;
+  roomId: string;
+  channelName: string;
+  consultationId: string;
+  doctorUserId: string;
+  patientUserId: string;
+  doctorToken?: string;
+  patientToken?: string;
+  provider: VideoProviderName;
+  createdAt: string;
+  expiresAt: string;
 }
 
-/**
- * Video call events
- */
+// ── Video call events ───────────────────────────────────────────────────────
 export type VideoCallEvent =
-    | 'call_initiated'
-    | 'call_accepted'
-    | 'call_rejected'
-    | 'call_ended'
-    | 'participant_joined'
-    | 'participant_left'
-    | 'call_failed';
+  | 'call_initiated'
+  | 'call_accepted'
+  | 'call_rejected'
+  | 'call_ended'
+  | 'participant_joined'
+  | 'participant_left'
+  | 'call_failed';
+

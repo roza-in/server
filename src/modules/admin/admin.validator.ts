@@ -1,125 +1,211 @@
 import { z } from 'zod';
+import { uuidSchema } from '../../common/validators.js';
+
+// =========================================================================
+// Pagination helper
+// =========================================================================
+
+const paginationFields = {
+  page: z.string().regex(/^\d+$/).transform(Number).optional(),
+  limit: z.string().regex(/^\d+$/).transform(Number).optional(),
+};
+
+// =========================================================================
+// Users
+// =========================================================================
 
 export const listUsersQuerySchema = z.object({
-  search: z.string().optional(),
-  role: z.string().optional(),
-  isActive: z.union([z.literal('true'), z.literal('false'), z.boolean()]).optional(),
-  isVerified: z.union([z.literal('true'), z.literal('false'), z.boolean()]).optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  page: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
-  limit: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
+  query: z.object({
+    search: z.string().max(255).optional(),
+    role: z.enum(['patient', 'reception', 'doctor', 'hospital', 'pharmacy', 'admin']).optional(),
+    is_active: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
+    is_blocked: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
+    ...paginationFields,
+  }),
 });
 
+export const getUserParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+});
+
+export const updateUserStatusSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({ is_active: z.boolean() }),
+});
+
+export const deleteUserParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+});
+
+// =========================================================================
+// User growth / analytics query
+// =========================================================================
+
 export const userGrowthQuerySchema = z.object({
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  groupBy: z.enum(['day', 'week', 'month']).optional(),
-  role: z.string().optional(),
+  query: z.object({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    groupBy: z.enum(['day', 'week', 'month']).default('day'),
+    role: z.enum(['patient', 'reception', 'doctor', 'hospital', 'pharmacy', 'admin']).optional(),
+  }),
+});
+
+export const trendPeriodSchema = z.object({
+  query: z.object({
+    period: z.enum(['day', 'week', 'month']).default('week'),
+  }),
+});
+
+// =========================================================================
+// Hospitals
+// =========================================================================
+
+export const listHospitalsQuerySchema = z.object({
+  query: z.object({
+    search: z.string().max(255).optional(),
+    status: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
+    type: z.enum([
+      'multi_specialty', 'single_specialty', 'nursing_home',
+      'clinic', 'diagnostic_center', 'medical_college', 'primary_health',
+    ]).optional(),
+    sortBy: z.enum([
+      'name', 'created_at', 'city', 'state', 'verification_status',
+      'type', 'is_active', 'email', 'phone', 'doctorCount', 'appointmentCount',
+    ]).default('created_at'),
+    sortOrder: z.enum(['asc', 'desc']).default('desc'),
+    ...paginationFields,
+  }),
+});
+
+export const hospitalParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
 });
 
 export const verifyHospitalSchema = z.object({
-  status: z.enum(['verified', 'rejected', 'under_review']),
-  remarks: z.string().optional(),
+  params: z.object({ id: uuidSchema }),
+  body: z.object({
+    status: z.enum(['verified', 'rejected', 'under_review']),
+    remarks: z.string().max(2000).optional(),
+  }),
+});
+
+export const updateHospitalStatusSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({ is_active: z.boolean() }),
 });
 
 export const updateHospitalSchema = z.object({
-  name: z.string().min(1).optional(),
-  legalName: z.string().optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  websiteUrl: z.string().url().optional().nullable(),
-  hospitalType: z.string().optional(),
-  address: z.string().optional(),
-  landmark: z.string().optional().nullable(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  pincode: z.string().optional(),
-  country: z.string().optional().default('India'),
-  latitude: z.number().optional().nullable(),
-  longitude: z.number().optional().nullable(),
-  about: z.string().optional().nullable(),
-  logoUrl: z.string().url().optional().nullable(),
-  coverUrl: z.string().url().optional().nullable(),
-  specialties: z.array(z.string()).optional(),
-  facilities: z.array(z.string()).optional(),
-  totalBeds: z.number().int().nonnegative().optional(),
-  icuBeds: z.number().int().nonnegative().optional(),
-  registrationNumber: z.string().optional(),
-  gstin: z.string().optional(),
-  licenseNumber: z.string().optional(),
-  panNumber: z.string().optional(),
-  subscriptionTier: z.enum(['basic', 'pro', 'enterprise']).optional(),
+  params: z.object({ id: uuidSchema }),
+  body: z.object({
+    name: z.string().min(1).max(255).optional(),
+    email: z.string().email().optional().nullable(),
+    phone: z.string().optional(),
+    website: z.string().url().optional().nullable(),
+    type: z.enum([
+      'multi_specialty', 'single_specialty', 'nursing_home',
+      'clinic', 'diagnostic_center', 'medical_college', 'primary_health',
+    ]).optional(),
+    description: z.string().max(5000).optional().nullable(),
+    short_description: z.string().max(500).optional().nullable(),
+    address: z.string().optional().nullable(),
+    landmark: z.string().optional().nullable(),
+    city: z.string().optional().nullable(),
+    state: z.string().optional().nullable(),
+    pincode: z.string().optional().nullable(),
+    country: z.string().optional(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
+    logo_url: z.string().url().optional().nullable(),
+    banner_url: z.string().url().optional().nullable(),
+    facilities: z.array(z.string()).optional().nullable(),
+    registration_number: z.string().optional().nullable(),
+    gstin: z.string().optional().nullable(),
+    pan: z.string().optional().nullable(),
+    emergency_services: z.boolean().optional(),
+    platform_commission_percent: z.number().min(0).max(100).optional(),
+    medicine_commission_percent: z.number().min(0).max(100).optional(),
+  }),
 });
 
-export const requestDocumentsSchema = z.object({
-  documentTypes: z.array(z.string()).min(1),
-  message: z.string().optional(),
-});
-
-// Doctor Verification Schemas
-export const verifyDoctorSchema = z.object({
-  status: z.enum(['verified', 'rejected', 'under_review']),
-  remarks: z.string().optional(),
-});
+// =========================================================================
+// Doctors
+// =========================================================================
 
 export const listDoctorsQuerySchema = z.object({
-  search: z.string().optional(),
-  verificationStatus: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
-  hospitalId: z.string().uuid().optional(),
-  page: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
-  limit: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
+  query: z.object({
+    search: z.string().max(255).optional(),
+    status: z.enum(['pending', 'under_review', 'verified', 'rejected', 'suspended']).optional(),
+    hospitalId: z.string().uuid().optional(),
+    ...paginationFields,
+  }),
 });
 
-export const ticketFiltersSchema = z.object({
-  status: z.string().optional(),
-  priority: z.string().optional(),
-  assignedTo: z.string().optional(),
-  userId: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  page: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
-  limit: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
+export const doctorParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
 });
 
-export const ticketUpdateSchema = z.object({
-  status: z.string().optional(),
-  priority: z.string().optional(),
-  assignedTo: z.string().optional(),
+export const verifyDoctorSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({
+    status: z.enum(['verified', 'rejected', 'under_review']),
+    remarks: z.string().max(2000).optional(),
+  }),
 });
 
-export const ticketReplySchema = z.object({
-  message: z.string().min(1),
-  attachments: z.array(z.string()).optional(),
+export const updateDoctorStatusSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+  body: z.object({ is_active: z.boolean() }),
+});
+
+// =========================================================================
+// Audit logs
+// =========================================================================
+
+export const auditLogParamsSchema = z.object({
+  params: z.object({ id: uuidSchema }),
+});
+
+// =========================================================================
+// Settings (platform_config)
+// =========================================================================
+
+export const settingKeySchema = z.object({
+  params: z.object({ key: z.string().min(1).max(255) }),
 });
 
 export const settingUpdateSchema = z.object({
-  value: z.any(),
+  params: z.object({ key: z.string().min(1).max(255) }),
+  body: z.object({
+    value: z.any(),
+  }),
 });
 
-export const reportTypeSchema = z.enum(['users', 'appointments', 'payments', 'hospitals']);
+// =========================================================================
+// Reports
+// =========================================================================
 
-export const reportFiltersSchema = z.object({
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  format: z.enum(['csv', 'xlsx', 'pdf']).optional(),
+export const reportTypeSchema = z.object({
+  params: z.object({
+    type: z.enum(['users', 'appointments', 'payments', 'hospitals']),
+  }),
+  query: z.object({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    format: z.enum(['csv', 'xlsx', 'pdf']).default('csv'),
+  }),
 });
 
-export const paginationQuery = z.object({
-  page: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
-  limit: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().positive().optional()),
-});
+// =========================================================================
+// Inferred types
+// =========================================================================
 
-export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
-export type UserGrowthQuery = z.infer<typeof userGrowthQuerySchema>;
-export type VerifyHospitalBody = z.infer<typeof verifyHospitalSchema>;
-export type RequestDocumentsBody = z.infer<typeof requestDocumentsSchema>;
-export type TicketFilters = z.infer<typeof ticketFiltersSchema>;
-export type TicketUpdateBody = z.infer<typeof ticketUpdateSchema>;
-export type TicketReplyBody = z.infer<typeof ticketReplySchema>;
-export type SettingUpdateBody = z.infer<typeof settingUpdateSchema>;
-export type ReportFilters = z.infer<typeof reportFiltersSchema>;
-export type VerifyDoctorBody = z.infer<typeof verifyDoctorSchema>;
-export type ListDoctorsQuery = z.infer<typeof listDoctorsQuerySchema>;
-export type UpdateHospitalBody = z.infer<typeof updateHospitalSchema>;
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>['query'];
+export type UserGrowthQuery = z.infer<typeof userGrowthQuerySchema>['query'];
+export type VerifyHospitalBody = z.infer<typeof verifyHospitalSchema>['body'];
+export type VerifyDoctorBody = z.infer<typeof verifyDoctorSchema>['body'];
+export type UpdateHospitalBody = z.infer<typeof updateHospitalSchema>['body'];
+export type ListDoctorsQuery = z.infer<typeof listDoctorsQuerySchema>['query'];
+export type SettingUpdateBody = z.infer<typeof settingUpdateSchema>['body'];
+export type ReportFilters = z.infer<typeof reportTypeSchema>['query'];
+
 

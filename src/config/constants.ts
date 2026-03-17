@@ -1,5 +1,5 @@
 /**
- * ROZX Healthcare Platform - Production Configuration Constants
+ * Rozx Healthcare Platform - Production Configuration Constants
  * All business logic constants, fees, and configuration values
  */
 
@@ -14,11 +14,11 @@ export const PLATFORM_FEES = {
   IN_PERSON_PREBOOKED: 4,
   WALKIN: 2,
   FOLLOWUP: 3,
-  
+
   // Fixed fees (in paisa)
   MINIMUM_FEE: 2000, // ₹20 minimum
   MAXIMUM_FEE: 50000, // ₹500 maximum
-  
+
   // Subscription fees
   HOSPITAL_BASIC_MONTHLY: 0,
   HOSPITAL_PREMIUM_MONTHLY: 499900, // ₹4,999
@@ -66,12 +66,12 @@ export const REFUND_POLICY = {
   PARTIAL_75_HOURS: 4,
   PARTIAL_50_HOURS: 1,
   NO_REFUND_HOURS: 0,
-  
+
   // Percentages
   FULL_PERCENT: 100,
   PARTIAL_75_PERCENT: 75,
   PARTIAL_50_PERCENT: 50,
-  
+
   // Credits for cancellation by provider
   DOCTOR_CANCEL_CREDIT: 5000, // ₹50 in paisa
 } as const;
@@ -231,9 +231,10 @@ export const USER_STATUS = {
 
 export const VERIFICATION_STATUS = {
   PENDING: 'pending',
-  IN_REVIEW: 'in_review',
+  UNDER_REVIEW: 'under_review',
   VERIFIED: 'verified',
   REJECTED: 'rejected',
+  SUSPENDED: 'suspended',
 } as const;
 
 export const APPOINTMENT_STATUS = {
@@ -253,7 +254,9 @@ export const PAYMENT_STATUS = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   REFUNDED: 'refunded',
-  REFUND_PROCESSING: 'refund_processing',
+  PARTIALLY_REFUNDED: 'partially_refunded',
+  EXPIRED: 'expired',
+  DISPUTED: 'disputed',
 } as const;
 
 // =============================================================================
@@ -285,25 +288,25 @@ export const MESSAGES = {
   CREATED: 'Resource created successfully',
   UPDATED: 'Resource updated successfully',
   DELETED: 'Resource deleted successfully',
-  
+
   LOGIN_SUCCESS: 'Login successful',
   LOGOUT_SUCCESS: 'Logout successful',
   OTP_SENT: 'OTP sent successfully',
   OTP_VERIFIED: 'OTP verified successfully',
   TOKEN_REFRESHED: 'Token refreshed successfully',
-  
+
   UNAUTHORIZED: 'Authentication required',
   FORBIDDEN: 'Access denied',
   NOT_FOUND: 'Resource not found',
   VALIDATION_ERROR: 'Validation failed',
   INTERNAL_ERROR: 'Internal server error',
   RATE_LIMIT_EXCEEDED: 'Too many requests, please try again later',
-  
+
   APPOINTMENT_BOOKED: 'Appointment booked successfully',
   APPOINTMENT_CANCELLED: 'Appointment cancelled successfully',
   APPOINTMENT_RESCHEDULED: 'Appointment rescheduled successfully',
   SLOT_NOT_AVAILABLE: 'Selected time slot is not available',
-  
+
   PAYMENT_INITIATED: 'Payment initiated',
   PAYMENT_SUCCESS: 'Payment successful',
   PAYMENT_FAILED: 'Payment failed',

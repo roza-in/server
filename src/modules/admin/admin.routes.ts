@@ -4,19 +4,18 @@ import {
   getDashboard,
   getRevenue,
   getUserGrowth,
-  // Listing & Management
+  // Hospitals
   listHospitals,
-  listDoctors,
-  listUsers,
-  listPatients,
-  // Verification
   verifyHospital,
   deleteHospital,
   updateHospitalStatus,
-  requestDocuments,
+  // Doctors
+  listDoctors,
   verifyDoctor,
   updateDoctorStatus,
   // Users
+  listUsers,
+  listPatients,
   getUser,
   updateUserStatus,
   deleteUser,
@@ -39,73 +38,92 @@ import {
 } from './admin.controller.js';
 import { authMiddleware } from '../../middlewares/auth.middleware.js';
 import { roleGuard } from '../../middlewares/role.middleware.js';
+import { validate } from '../../middlewares/validate.middleware.js';
+import {
+  listUsersQuerySchema,
+  getUserParamsSchema,
+  updateUserStatusSchema,
+  deleteUserParamsSchema,
+  userGrowthQuerySchema,
+  trendPeriodSchema,
+  listHospitalsQuerySchema,
+  hospitalParamsSchema,
+  verifyHospitalSchema,
+  updateHospitalStatusSchema,
+  listDoctorsQuerySchema,
+  doctorParamsSchema,
+  verifyDoctorSchema,
+  updateDoctorStatusSchema,
+  auditLogParamsSchema,
+  settingKeySchema,
+  settingUpdateSchema,
+  reportTypeSchema,
+} from './admin.validator.js';
 
 const router = Router();
 
-/**
- * Admin Routes - Aligned with frontend endpoints and RESTful patterns
- */
+// All admin routes require authentication + admin role
+router.use(authMiddleware, roleGuard('admin'));
 
 // ============================================================================
 // DASHBOARD & STATS
 // ============================================================================
-router.get('/', authMiddleware, roleGuard('admin'), getDashboard);
-router.get('/stats', authMiddleware, roleGuard('admin'), getDashboard);
-router.get('/revenue', authMiddleware, roleGuard('admin'), getRevenue);
-router.get('/users/growth', authMiddleware, roleGuard('admin'), getUserGrowth);
+router.get('/', getDashboard);
+router.get('/stats', getDashboard);
+router.get('/revenue', getRevenue);
+router.get('/users/growth', validate(userGrowthQuerySchema), getUserGrowth);
 
 // ============================================================================
-// LISTING & MANAGEMENT
+// HOSPITALS
 // ============================================================================
-router.get('/hospitals', authMiddleware, roleGuard('admin'), listHospitals);
-router.get('/doctors', authMiddleware, roleGuard('admin'), listDoctors);
-router.get('/users', authMiddleware, roleGuard('admin'), listUsers);
-router.get('/patients', authMiddleware, roleGuard('admin'), listPatients);
+router.get('/hospitals', validate(listHospitalsQuerySchema), listHospitals);
+router.patch('/hospitals/:id/verify', validate(verifyHospitalSchema), verifyHospital);
+router.patch('/hospitals/:id/status', validate(updateHospitalStatusSchema), updateHospitalStatus);
+router.delete('/hospitals/:id', validate(hospitalParamsSchema), deleteHospital);
 
 // ============================================================================
-// USER MANAGEMENT (Patients/Common)
+// DOCTORS
 // ============================================================================
-router.get('/users/:id', authMiddleware, roleGuard('admin'), getUser);
-router.patch('/users/:id/status', authMiddleware, roleGuard('admin'), updateUserStatus);
-router.delete('/users/:id', authMiddleware, roleGuard('admin'), deleteUser);
+router.get('/doctors', validate(listDoctorsQuerySchema), listDoctors);
+router.patch('/doctors/:id/verify', validate(verifyDoctorSchema), verifyDoctor);
+router.patch('/doctors/:id/status', validate(updateDoctorStatusSchema), updateDoctorStatus);
 
 // ============================================================================
-// VERIFICATION WORKFLOWS
+// USERS
 // ============================================================================
-router.patch('/hospitals/:id/verify', authMiddleware, roleGuard('admin'), verifyHospital);
-router.delete('/hospitals/:id', authMiddleware, roleGuard('admin'), deleteHospital);
-router.patch('/hospitals/:id/status', authMiddleware, roleGuard('admin'), updateHospitalStatus);
-router.post('/hospitals/:id/request-documents', authMiddleware, roleGuard('admin'), requestDocuments);
-router.patch('/doctors/:id/verify', authMiddleware, roleGuard('admin'), verifyDoctor);
-router.patch('/doctors/:id/status', authMiddleware, roleGuard('admin'), updateDoctorStatus);
+router.get('/users', validate(listUsersQuerySchema), listUsers);
+router.get('/patients', listPatients);
+router.get('/users/:id', validate(getUserParamsSchema), getUser);
+router.patch('/users/:id/status', validate(updateUserStatusSchema), updateUserStatus);
+router.delete('/users/:id', validate(deleteUserParamsSchema), deleteUser);
 
 // ============================================================================
 // ANALYTICS & TRENDS
 // ============================================================================
-router.get('/analytics/overview', authMiddleware, roleGuard('admin'), getAnalyticsOverview);
-router.get('/analytics/trends/appointments', authMiddleware, roleGuard('admin'), getAppointmentTrends);
-router.get('/analytics/trends/revenue', authMiddleware, roleGuard('admin'), getRevenueTrends);
-router.get('/analytics/trends/users', authMiddleware, roleGuard('admin'), getUserTrends);
+router.get('/analytics/overview', getAnalyticsOverview);
+router.get('/analytics/trends/appointments', validate(trendPeriodSchema), getAppointmentTrends);
+router.get('/analytics/trends/revenue', validate(trendPeriodSchema), getRevenueTrends);
+router.get('/analytics/trends/users', validate(trendPeriodSchema), getUserTrends);
 
 // ============================================================================
 // AUDIT LOGS
 // ============================================================================
-router.get('/audit-logs', authMiddleware, roleGuard('admin'), listAuditLogs);
-router.get('/audit-logs/:id', authMiddleware, roleGuard('admin'), getAuditLog);
+router.get('/audit-logs', listAuditLogs);
+router.get('/audit-logs/:id', validate(auditLogParamsSchema), getAuditLog);
 
 // ============================================================================
-// SETTINGS
+// SETTINGS (platform_config)
 // ============================================================================
-router.get('/settings', authMiddleware, roleGuard('admin'), getSettings);
-router.get('/settings/:key', authMiddleware, roleGuard('admin'), getSetting);
-router.put('/settings/:key', authMiddleware, roleGuard('admin'), updateSetting);
-router.post('/settings/:key/reset', authMiddleware, roleGuard('admin'), resetSetting);
+router.get('/settings', getSettings);
+router.get('/settings/:key', validate(settingKeySchema), getSetting);
+router.put('/settings/:key', validate(settingUpdateSchema), updateSetting);
+router.post('/settings/:key/reset', validate(settingKeySchema), resetSetting);
 
 // ============================================================================
-// REPORTS
+// REPORTS — scheduled BEFORE :type to avoid wildcard capture
 // ============================================================================
-router.post('/reports/:type', authMiddleware, roleGuard('admin'), generateReport);
-router.get('/reports/scheduled', authMiddleware, roleGuard('admin'), getScheduledReports);
+router.get('/reports/scheduled', getScheduledReports);
+router.post('/reports/:type', validate(reportTypeSchema), generateReport);
 
 export const adminRoutes = router;
 export default router;

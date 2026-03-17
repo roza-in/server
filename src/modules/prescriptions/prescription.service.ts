@@ -1,8 +1,8 @@
 import { logger } from '../../config/logger.js';
 import { NotFoundError, BadRequestError } from '../../common/errors/index.js';
 import { prescriptionRepository } from '../../database/repositories/prescription.repo.js';
-import { appointmentRepository } from '../../database/repositories/appointment.repo.js';
-import type { PrescriptionFilters, CreatePrescriptionInput } from './prescription.types.js';
+import type { Prescription } from '../../types/database.types.js';
+import type { PrescriptionFilters, CreatePrescriptionInput, PrescriptionWithRelations } from './prescription.types.js';
 
 /**
  * Prescription Service - Domain module for prescription management
@@ -23,50 +23,66 @@ class PrescriptionService {
     /**
      * Create prescription
      */
-    async create(doctorId: string, input: CreatePrescriptionInput): Promise<any> {
-        // Get appointment and validate doctor
-        const appointment = await appointmentRepository.findByIdWithRelations(input.appointment_id);
+    async create(doctorId: string, input: CreatePrescriptionInput): Promise<Prescription> {
+        // Fetch consultation to get patient/hospital context
+        const consultation = await this.getConsultationContext(input.consultation_id);
 
-        if (!appointment) {
-            throw new NotFoundError('Appointment not found');
-        }
-
-        if (appointment.doctor_id !== doctorId) {
-            throw new BadRequestError('You are not authorized to create prescription for this appointment');
-        }
-
-        const hospitalSlug = appointment.hospital?.slug;
-        const prescriptionNumber = this.generatePrescriptionNumber(hospitalSlug);
+        const prescriptionNumber = this.generatePrescriptionNumber(consultation.hospitalSlug);
 
         const prescription = await prescriptionRepository.create({
             prescription_number: prescriptionNumber,
-            appointment_id: input.appointment_id,
-            consultation_id: input.consultation_id || null,
+            consultation_id: input.consultation_id,
             doctor_id: doctorId,
-            patient_id: appointment.patient_id,
-            hospital_id: appointment.hospital_id,
-            chief_complaints: input.chief_complaints,
-            diagnosis: input.diagnosis,
-            diagnosis_icd_codes: input.diagnosis_icd_codes,
-            vitals: input.vitals,
-            medications: input.medications,
-            lab_tests: input.lab_tests,
-            investigations: input.investigations,
-            lifestyle_advice: input.lifestyle_advice,
-            dietary_advice: input.dietary_advice,
-            general_advice: input.general_advice,
-            precautions: input.precautions,
-            follow_up_date: input.follow_up_date,
-            follow_up_instructions: input.follow_up_instructions,
-            valid_until: this.calculateValidity(),
-            updated_at: new Date().toISOString()
+            patient_id: consultation.patientId,
+            hospital_id: consultation.hospitalId,
+            diagnosis: input.diagnosis || null,
+            medications: input.medications as unknown as Prescription['medications'],
+            lab_tests: input.lab_tests || null,
+            imaging_tests: input.imaging_tests || null,
+            diet_advice: input.diet_advice || null,
+            lifestyle_advice: input.lifestyle_advice || null,
+            general_instructions: input.general_instructions || null,
+            valid_until: input.valid_until || this.calculateValidity(),
         });
 
         if (!prescription) {
             throw new BadRequestError('Failed to create prescription');
         }
 
+        this.log.info(`Prescription created: ${prescriptionNumber}`, {
+            prescriptionId: prescription.id,
+            doctorId,
+            consultationId: input.consultation_id,
+        });
+
         return prescription;
+    }
+
+    /**
+     * Get consultation context for prescription creation
+     */
+    private async getConsultationContext(consultationId: string): Promise<{
+        patientId: string;
+        hospitalId: string;
+        hospitalSlug?: string;
+    }> {
+        const { supabaseAdmin } = await import('../../database/supabase-admin.js');
+        const { data, error } = await supabaseAdmin
+            .from('consultations')
+            .select('patient_id, hospital_id, appointment:appointments(hospital:hospitals(slug))')
+            .eq('id', consultationId)
+            .single();
+
+        if (error || !data) {
+            throw new NotFoundError('Consultation not found');
+        }
+
+        const appointment = data.appointment as any;
+        return {
+            patientId: data.patient_id,
+            hospitalId: data.hospital_id,
+            hospitalSlug: appointment?.hospital?.slug,
+        };
     }
 
     private calculateValidity(): string {
@@ -76,67 +92,67 @@ class PrescriptionService {
     }
 
     /**
-     * Get prescription by ID
+     * Get prescription by ID with relations
      */
-    async getById(prescriptionId: string): Promise<any> {
+    async getById(prescriptionId: string): Promise<PrescriptionWithRelations> {
         const prescription = await prescriptionRepository.findByIdWithRelations(prescriptionId);
         if (!prescription) {
             throw new NotFoundError('Prescription not found');
         }
-        return prescription;
+        return prescription as PrescriptionWithRelations;
     }
 
     /**
      * List prescriptions with filters
      */
-    async list(filters: PrescriptionFilters): Promise<any> {
-        const { data, total } = await prescriptionRepository.findMany({
-            patient_id: filters.patientId,
-            doctor_id: filters.doctorId,
-            hospital_id: filters.hospitalId,
-            page: filters.page,
-            limit: filters.limit
-        });
+    async list(filters: PrescriptionFilters): Promise<{
+        prescriptions: Prescription[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }> {
+        const page = filters.page || 1;
+        const limit = filters.limit || 20;
+
+        const dbFilters: Record<string, unknown> = {};
+        if (filters.patient_id) dbFilters.patient_id = filters.patient_id;
+        if (filters.doctor_id) dbFilters.doctor_id = filters.doctor_id;
+        if (filters.hospital_id) dbFilters.hospital_id = filters.hospital_id;
+
+        const { data, total } = await prescriptionRepository.findMany(dbFilters, page, limit);
 
         return {
             prescriptions: data,
             total,
-            page: filters.page || 1,
-            limit: filters.limit || 20,
-            totalPages: Math.ceil(total / (filters.limit || 20)),
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
         };
     }
 
     /**
      * Get patient prescriptions
      */
-    async getPatientPrescriptions(patientId: string, page = 1, limit = 20): Promise<any> {
-        return this.list({ patientId, page, limit });
+    async getPatientPrescriptions(patientId: string, page = 1, limit = 20): Promise<{
+        prescriptions: Prescription[];
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+    }> {
+        return this.list({ patient_id: patientId, page, limit });
     }
 
     /**
-     * Sign prescription (digital signature)
+     * Update prescription PDF URL
      */
-    async sign(prescriptionId: string, doctorId: string, signatureUrl?: string): Promise<any> {
-        const existing = await prescriptionRepository.findById(prescriptionId);
-
-        if (!existing || existing.doctor_id !== doctorId) {
-            throw new BadRequestError('You are not authorized to sign this prescription');
-        }
-
-        const data = await prescriptionRepository.update(prescriptionId, {
-            signed_at: new Date().toISOString(),
-            signature_url: signatureUrl || null,
+    async updatePdfUrl(prescriptionId: string, pdfUrl: string): Promise<Prescription | null> {
+        return prescriptionRepository.update(prescriptionId, {
+            pdf_url: pdfUrl,
             updated_at: new Date().toISOString(),
         });
-
-        if (!data) {
-            throw new BadRequestError('Failed to sign prescription');
-        }
-
-        return data;
     }
 }
 
 export const prescriptionService = new PrescriptionService();
-
