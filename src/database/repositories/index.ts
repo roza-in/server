@@ -42,7 +42,6 @@ export { notificationRepository } from './notification.repo.js';
 export { notificationQueueRepository } from './notification-queue.repo.js';
 
 // Hospital Management
-export { hospitalVerificationRepository } from './hospital-verification.repo.js';
 export { hospitalAnnouncementRepository } from './hospital-announcement.repo.js';
 
 // Ratings

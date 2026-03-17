@@ -93,12 +93,13 @@ class ScheduleService {
       throw new BadRequestError('Start time must be before end time');
     }
 
-    // Check for overlapping schedules on same day
+    // Check for overlapping schedules on same day and same consultation type
     const overlaps = await this.checkOverlappingSchedules(
       doctorId,
       data.dayOfWeek,
       data.startTime,
-      data.endTime
+      data.endTime,
+      data.consultationType
     );
 
     if (overlaps.length > 0) {
@@ -346,8 +347,8 @@ class ScheduleService {
     role: string,
     data: CreateOverrideInput
   ): Promise<ScheduleOverrideDTO> {
-    // Verify hospital-only permission
-    await this.verifyHospitalPermission(doctorId, userId, role);
+    // Verify permission (hospital admin or the doctor themselves)
+    await this.verifySchedulePermission(doctorId, userId, role);
 
     // Check for existing override on same date
     const { data: existing } = await this.supabase
@@ -454,8 +455,8 @@ class ScheduleService {
       throw new NotFoundError('Schedule override');
     }
 
-    // Verify hospital-only permission
-    await this.verifyHospitalPermission(override.doctor_id, userId, role);
+    // Verify permission (hospital admin or the doctor themselves)
+    await this.verifySchedulePermission(override.doctor_id, userId, role);
 
     const { error } = await this.supabase
       .from('schedule_overrides')
@@ -483,20 +484,16 @@ class ScheduleService {
   // ============================================================
 
   /**
-   * Verify user is hospital admin for this doctor (not doctor themselves)
+   * Verify user has permission to manage a doctor's schedule/overrides.
+   * Allowed: Platfrom admins, hospital admins of that doctor, or the doctor themselves.
    */
-  private async verifyHospitalPermission(doctorId: string, userId: string, role: string): Promise<void> {
+  private async verifySchedulePermission(doctorId: string, userId: string, role: string): Promise<void> {
     // Admin can do anything
     if (role === 'admin') {
       return;
     }
 
-    // Only hospital role can manage schedules
-    if (role !== 'hospital') {
-      throw new ForbiddenError('Only hospital administrators can manage schedules');
-    }
-
-    // Get doctor with hospital info
+    // Get doctor
     const { data: doctor, error } = await this.supabase
       .from('doctors')
       .select('*, hospitals!doctors_hospital_id_fkey(admin_user_id)')
@@ -507,30 +504,63 @@ class ScheduleService {
       throw new NotFoundError('Doctor');
     }
 
-    // Check if user is the hospital admin
-    const hospitalAdminId = doctor.hospitals?.admin_user_id;
-    if (hospitalAdminId !== userId) {
-      throw new ForbiddenError('You can only manage schedules for doctors in your hospital');
+    // Doctor can manage their own schedule if allowed by policy (usually overrides/leaves)
+    if (role === 'doctor' && doctor.user_id === userId) {
+      return;
     }
+
+    // Hospital admin check
+    if (role === 'hospital') {
+      const hospitalAdminId = doctor.hospitals?.admin_user_id;
+      if (hospitalAdminId === userId) {
+        return;
+      }
+    }
+
+    throw new ForbiddenError('You do not have permission to manage this schedule');
   }
 
   /**
-   * Check for overlapping schedules on same day
-   * NOTE: Consultation types are now global per doctor, so we just check time overlaps
+   * Verify user is hospital admin for this doctor (Legacy - used for recurring schedule changes)
+   */
+  private async verifyHospitalPermission(doctorId: string, userId: string, role: string): Promise<void> {
+    // Admin can do anything
+    if (role === 'admin') {
+      return;
+    }
+
+    // Only hospital role can manage recurring schedules in this specific check
+    if (role !== 'hospital') {
+      throw new ForbiddenError('Only hospital administrators can manage recurring schedules');
+    }
+
+    // Reuse the general check but restricted to hospital role
+    await this.verifySchedulePermission(doctorId, userId, role);
+  }
+
+  /**
+   * Check for overlapping schedules on same day and same consultation type
+   * Different consultation types can share the same time slot
    */
   private async checkOverlappingSchedules(
     doctorId: string,
     dayOfWeek: DayOfWeek,
     startTime: string,
     endTime: string,
+    consultationType?: string,
     excludeId?: string
   ): Promise<any[]> {
     let query = this.supabase
       .from('doctor_schedules')
-      .select('id, start_time, end_time')
+      .select('id, start_time, end_time, consultation_type')
       .eq('doctor_id', doctorId)
       .eq('day_of_week', dayOfWeek)
       .eq('is_active', true);
+
+    // Only check overlaps within the same consultation type
+    if (consultationType) {
+      query = query.eq('consultation_type', consultationType);
+    }
 
     if (excludeId) {
       query = query.neq('id', excludeId);

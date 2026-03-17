@@ -1,4 +1,4 @@
-import type { VerificationStatus, HospitalType } from '../../types/database.types.js';
+import type { VerificationStatus, HospitalType, AdminTier, AuditAction } from '../../types/database.types.js';
 
 // =========================================================================
 // Dashboard
@@ -9,6 +9,22 @@ export interface DashboardStats {
   totalHospitals: number;
   totalDoctors: number;
   totalAppointments: number;
+  finance?: FinancialKPIs;
+  health?: SystemHealthStats;
+}
+
+export interface FinancialKPIs {
+  dailyRevenue: number;
+  pendingSettlementAmount: number;
+  activeDisputeCount: number;
+  failedPaymentCount24h: number;
+}
+
+export interface SystemHealthStats {
+  errorCount24h: number;
+  notificationQueueDepth: number;
+  webhookFailures24h: number;
+  pendingVerifications: number;
 }
 
 // =========================================================================
@@ -37,7 +53,58 @@ export interface AdminHospitalFilters {
 export interface AdminDoctorFilters {
   search?: string;
   status?: VerificationStatus;
-  hospitalId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminNotificationFilters {
+  search?: string;
+  status?: string;
+  channel?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminSupportFilters {
+  search?: string;
+  status?: string;
+  priority?: string;
+  category?: string;
+  assignedTo?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminVerificationFilters {
+  search?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminReportFilters {
+  type?: string;
+  isActive?: boolean;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminSystemLogFilters {
+  level?: string;
+  module?: string;
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AdminAuditFilters {
+  action?: AuditAction;
+  entityType?: string;
+  userId?: string;
+  phiOnly?: boolean | string;
+  adminOnly?: boolean | string;
   page?: number;
   limit?: number;
 }

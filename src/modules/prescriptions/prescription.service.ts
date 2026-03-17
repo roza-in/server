@@ -69,18 +69,19 @@ class PrescriptionService {
         const { supabaseAdmin } = await import('../../database/supabase-admin.js');
         const { data, error } = await supabaseAdmin
             .from('consultations')
-            .select('patient_id, hospital_id, appointment:appointments(hospital:hospitals(slug))')
+            .select('appointment:appointments(patient_id, hospital_id, hospital:hospitals(slug))')
             .eq('id', consultationId)
             .single();
 
         if (error || !data) {
+            this.log.error('Failed to get consultation context', { error, consultationId });
             throw new NotFoundError('Consultation not found');
         }
 
         const appointment = data.appointment as any;
         return {
-            patientId: data.patient_id,
-            hospitalId: data.hospital_id,
+            patientId: appointment?.patient_id,
+            hospitalId: appointment?.hospital_id,
             hospitalSlug: appointment?.hospital?.slug,
         };
     }
@@ -99,14 +100,14 @@ class PrescriptionService {
         if (!prescription) {
             throw new NotFoundError('Prescription not found');
         }
-        return prescription as PrescriptionWithRelations;
+        return this.transformPrescription(prescription);
     }
 
     /**
      * List prescriptions with filters
      */
     async list(filters: PrescriptionFilters): Promise<{
-        prescriptions: Prescription[];
+        prescriptions: PrescriptionWithRelations[];
         total: number;
         page: number;
         limit: number;
@@ -122,13 +123,38 @@ class PrescriptionService {
 
         const { data, total } = await prescriptionRepository.findMany(dbFilters, page, limit);
 
+        const transformedData = (data || []).map(p => this.transformPrescription(p));
+
         return {
-            prescriptions: data,
+            prescriptions: transformedData,
             total,
             page,
             limit,
             totalPages: Math.ceil(total / limit),
         };
+    }
+
+    /**
+     * Transform database row to prescription type with flattened fields
+     */
+    private transformPrescription(data: any): PrescriptionWithRelations {
+        const doctorData = data.doctor || data.doctors;
+        const hospitalData = data.hospital || data.hospitals;
+
+        return {
+            ...data,
+            // Flattened fields for frontend consistency
+            patientName: data.patient?.name || 'Unknown Patient',
+            doctorName: doctorData?.users?.name || doctorData?.name || 'Doctor',
+            doctorSpecialization: doctorData?.specialization?.name || doctorData?.specialization || 'General Physician',
+            doctorRegistrationNumber: doctorData?.registration_number || doctorData?.registrationNumber || 'N/A',
+            hospitalName: hospitalData?.name || 'Rozx Partner Hospital',
+
+            // Ensure consistent naming for relations
+            doctor: doctorData,
+            patient: data.patient,
+            hospital: hospitalData,
+        } as PrescriptionWithRelations;
     }
 
     /**

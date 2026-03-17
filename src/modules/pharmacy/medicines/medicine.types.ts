@@ -60,6 +60,7 @@ export interface CreateMedicineOrderInput {
     familyMemberId?: string;
     couponCode?: string;
     idempotencyKey?: string;
+    hospitalId?: string;
 }
 
 export interface CreateOrderItemInput {

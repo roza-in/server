@@ -76,7 +76,6 @@ ALTER TABLE scheduled_notifications ENABLE ROW LEVEL SECURITY;
 -- New tables from 004 & 008
 ALTER TABLE appointment_waitlist ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notification_queue ENABLE ROW LEVEL SECURITY;
-ALTER TABLE hospital_verification_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hospital_announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rating_helpfulness ENABLE ROW LEVEL SECURITY;
@@ -171,7 +170,7 @@ CREATE POLICY hospitals_platform_admin ON hospitals FOR ALL
 
 -- ======================== HOSPITAL STAFF ========================
 
-CREATE POLICY staff_hospital_admin ON hospital_staff FOR ALL
+CREATE POLICY staff_hospital_manage ON hospital_staff FOR ALL
   USING (hospital_id = get_admin_hospital_id());
 CREATE POLICY staff_own_view ON hospital_staff FOR SELECT
   USING (user_id = get_auth_user_id());
@@ -186,7 +185,7 @@ CREATE POLICY doctors_own ON doctors FOR SELECT
   USING (user_id = get_auth_user_id());
 CREATE POLICY doctors_own_update ON doctors FOR UPDATE
   USING (user_id = get_auth_user_id()) WITH CHECK (user_id = get_auth_user_id());
-CREATE POLICY doctors_hospital_admin ON doctors FOR ALL
+CREATE POLICY doctors_hospital_manage ON doctors FOR ALL
   USING (hospital_id = get_admin_hospital_id());
 CREATE POLICY doctors_platform_admin ON doctors FOR ALL
   USING (is_admin());
@@ -197,7 +196,7 @@ CREATE POLICY schedules_public_view ON doctor_schedules FOR SELECT
   USING (is_active = true);
 CREATE POLICY schedules_doctor_view ON doctor_schedules FOR SELECT
   USING (doctor_id IN (SELECT id FROM doctors WHERE user_id = get_auth_user_id()));
-CREATE POLICY schedules_hospital_admin ON doctor_schedules FOR ALL
+CREATE POLICY schedules_hospital_manage ON doctor_schedules FOR ALL
   USING (doctor_id IN (SELECT id FROM doctors WHERE hospital_id = get_admin_hospital_id()));
 CREATE POLICY schedules_platform_admin ON doctor_schedules FOR ALL
   USING (is_admin());
@@ -206,7 +205,7 @@ CREATE POLICY schedules_platform_admin ON doctor_schedules FOR ALL
 
 CREATE POLICY overrides_doctor_view ON schedule_overrides FOR SELECT
   USING (doctor_id IN (SELECT id FROM doctors WHERE user_id = get_auth_user_id()));
-CREATE POLICY overrides_hospital_admin ON schedule_overrides FOR ALL
+CREATE POLICY overrides_hospital_manage ON schedule_overrides FOR ALL
   USING (doctor_id IN (SELECT id FROM doctors WHERE hospital_id = get_admin_hospital_id()));
 CREATE POLICY overrides_platform_admin ON schedule_overrides FOR ALL
   USING (is_admin());
@@ -235,7 +234,7 @@ CREATE POLICY appointments_reception ON appointments FOR ALL
   USING (hospital_id = get_staff_hospital_id());
 CREATE POLICY appointments_doctor_view ON appointments FOR SELECT
   USING (doctor_id IN (SELECT id FROM doctors WHERE user_id = get_auth_user_id()));
-CREATE POLICY appointments_hospital_admin ON appointments FOR SELECT
+CREATE POLICY appointments_hospital_manage ON appointments FOR SELECT
   USING (hospital_id = get_admin_hospital_id());
 CREATE POLICY appointments_platform_admin ON appointments FOR ALL
   USING (is_admin());
@@ -587,7 +586,7 @@ CREATE POLICY waitlist_own ON appointment_waitlist FOR ALL
   USING (patient_id = get_auth_user_id());
 CREATE POLICY waitlist_doctor_view ON appointment_waitlist FOR SELECT
   USING (doctor_id IN (SELECT id FROM doctors WHERE user_id = get_auth_user_id()));
-CREATE POLICY waitlist_hospital_admin ON appointment_waitlist FOR SELECT
+CREATE POLICY waitlist_hospital_manage ON appointment_waitlist FOR SELECT
   USING (hospital_id = get_admin_hospital_id());
 CREATE POLICY waitlist_platform_admin ON appointment_waitlist FOR ALL
   USING (is_admin());
@@ -595,15 +594,6 @@ CREATE POLICY waitlist_platform_admin ON appointment_waitlist FOR ALL
 -- ======================== NOTIFICATION QUEUE (admin only) ========================
 
 CREATE POLICY notif_queue_admin ON notification_queue FOR ALL
-  USING (is_admin());
-
--- ======================== HOSPITAL VERIFICATION REQUESTS ========================
-
-CREATE POLICY hosp_verif_hospital_admin ON hospital_verification_requests FOR ALL
-  USING (hospital_id = get_admin_hospital_id());
-CREATE POLICY hosp_verif_requested_by ON hospital_verification_requests FOR SELECT
-  USING (requested_by = get_auth_user_id());
-CREATE POLICY hosp_verif_platform_admin ON hospital_verification_requests FOR ALL
   USING (is_admin());
 
 -- ======================== SCHEDULED REPORTS ========================
@@ -617,7 +607,7 @@ CREATE POLICY scheduled_reports_admin ON scheduled_reports FOR ALL
 
 CREATE POLICY announcements_public_read ON hospital_announcements FOR SELECT
   USING (is_public = true AND is_active = true AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()));
-CREATE POLICY announcements_hospital_admin ON hospital_announcements FOR ALL
+CREATE POLICY announcements_hospital_manage ON hospital_announcements FOR ALL
   USING (hospital_id = get_admin_hospital_id());
 CREATE POLICY announcements_platform_admin ON hospital_announcements FOR ALL
   USING (is_admin());

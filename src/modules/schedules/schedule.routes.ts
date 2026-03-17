@@ -120,7 +120,7 @@ router.delete(
  */
 router.post(
   '/doctors/:doctorId/overrides',
-  roleGuard('hospital', 'admin'),
+  roleGuard('hospital', 'admin', 'doctor'),
   validate(createOverrideSchema),
   createOverride
 );
@@ -132,7 +132,7 @@ router.post(
  */
 router.get(
   '/doctors/:doctorId/overrides',
-  roleGuard('hospital', 'admin'),
+  roleGuard('hospital', 'admin', 'doctor'),
   validate(getOverridesSchema),
   getOverrides
 );
@@ -144,7 +144,7 @@ router.get(
  */
 router.delete(
   '/overrides/:overrideId',
-  roleGuard('hospital', 'admin'),
+  roleGuard('hospital', 'admin', 'doctor'),
   validate(deleteOverrideSchema),
   deleteOverride
 );

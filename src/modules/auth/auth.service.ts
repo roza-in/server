@@ -17,6 +17,7 @@ import { getRedisClient, checkRateLimit } from '../../config/redis.js';
 import { notificationService } from '../../integrations/notification/notification.service.js';
 import { NotificationPurpose, NotificationChannel } from '../../integrations/notification/notification.types.js';
 import { formatUserProfile, mapUserToProfile } from '../users/user.mapper.js';
+import { platformConfigService } from '../platform-config/platform-config.service.js';
 
 const SESSION_EXPIRES_DAYS = 30;
 
@@ -43,22 +44,30 @@ class AuthService {
 
     // If only phone is provided, resolve the user's email for delivery.
     // OTP is still stored/verified by phone — email is only used for sending.
-    if (phone && !email) {
-      try {
-        const user = await userRepository.findByPhone(phone);
-        if (user && (user as any).email) {
-          email = (user as any).email;
+    let adminTier: string | null = null;
+    try {
+      const existingUser = phone
+        ? await userRepository.findByPhone(phone)
+        : await userRepository.findByEmail(email!);
+
+      if (existingUser) {
+        if (phone && !email && (existingUser as any).email) {
+          email = (existingUser as any).email;
         }
-      } catch {
-        // Ignore — user may not exist yet (registration)
+        adminTier = (existingUser as any).admin_tier || null;
       }
+    } catch {
+      // Ignore — user may not exist yet (registration)
     }
 
     const redis = getRedisClient();
 
     const identifier = phone ?? email!;
     const otp = generateOTP();
-    const ttlSeconds = (env.OTP_EXPIRY_MINUTES || 5) * 60;
+
+    // Fetch dynamic OTP settings
+    const otpSettings = await platformConfigService.getOTPSettings();
+    const ttlSeconds = (otpSettings.expiry_minutes || 5) * 60;
 
     const rate = await checkRateLimit(
       `otp:${identifier}`,
@@ -85,6 +94,7 @@ class AuthService {
       JSON.stringify({
         otp: otpHash,
         sessionId,
+        adminTier,
         purpose,
         attempts: 0,
       })
@@ -105,9 +115,9 @@ class AuthService {
       email: email || undefined,
       variables: {
         otp,
-        expiry: String(env.OTP_EXPIRY_MINUTES || 5),
+        expiry: String(otpSettings.expiry_minutes || 5),
       },
-      whatsappValues: [otp, String(env.OTP_EXPIRY_MINUTES || 5)], // Positional variables for Interakt
+      whatsappValues: [otp, String(otpSettings.expiry_minutes || 5)], // Positional variables for Interakt
     });
 
     return {
@@ -135,7 +145,8 @@ class AuthService {
     const { otp: storedOtpHash, purpose: storedPurpose, attempts = 0 } = parsed;
 
     // C2: Enforce attempt limiting
-    const maxAttempts = env.OTP_MAX_ATTEMPTS || 3;
+    const otpSettings = await platformConfigService.getOTPSettings();
+    const maxAttempts = otpSettings.max_attempts || 3;
     if (attempts >= maxAttempts) {
       await redis?.del(redisKey);
       throw new OTPInvalidError('Too many invalid attempts. Please request a new OTP.');
@@ -181,7 +192,8 @@ class AuthService {
     const { otp: storedOtpHash, purpose: storedPurpose, attempts = 0 } = parsed;
 
     // C2: Enforce attempt limiting
-    const maxAttempts = env.OTP_MAX_ATTEMPTS || 3;
+    const otpSettings = await platformConfigService.getOTPSettings();
+    const maxAttempts = otpSettings.max_attempts || 3;
     if (attempts >= maxAttempts) {
       await redis?.del(redisKey);
       throw new OTPInvalidError('Too many invalid attempts. Please request a new OTP.');
@@ -331,7 +343,7 @@ class AuthService {
       email: user.email,
       hospitalId,
       doctorId,
-      sessionId,
+      sessionId, adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);
@@ -421,7 +433,7 @@ class AuthService {
       email: user.email,
       hospitalId,
       doctorId,
-      sessionId,
+      sessionId, adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);
@@ -482,7 +494,7 @@ class AuthService {
       role: user.role,
       phone: user.phone,
       email: user.email,
-      sessionId,
+      sessionId, adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);
@@ -639,7 +651,7 @@ class AuthService {
       role: 'patient',
       phone: user.phone,
       email: user.email,
-      sessionId,
+      sessionId, adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);
@@ -752,7 +764,7 @@ class AuthService {
       phone: user.phone,
       email: user.email,
       hospitalId: hospital_record.id,
-      sessionId,
+      sessionId, adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);
@@ -778,8 +790,42 @@ class AuthService {
   }
 
   // =================================================================
-  // Password Reset (C7 Fix)
+  // Password Management
   // =================================================================
+
+  /**
+   * Change password for an authenticated user (current + new password)
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ message: string }> {
+    const user = await userRepository.findById(userId);
+    if (!user) {
+      throw new UserNotFoundError();
+    }
+
+    if (!(user as any).password_hash) {
+      throw new BadRequestError('Password login is not enabled for this account. You may have registered via OTP or Google.');
+    }
+
+    const isValid = await this.verifyPassword(currentPassword, (user as any).password_hash);
+    if (!isValid) {
+      throw new UnauthorizedError('Current password is incorrect');
+    }
+
+    if (currentPassword === newPassword) {
+      throw new BadRequestError('New password must be different from current password');
+    }
+
+    const passwordHash = await this.hashPassword(newPassword);
+
+    await userRepository.update(userId, {
+      password_hash: passwordHash,
+      updated_at: new Date().toISOString(),
+    } as any);
+
+    this.log.info(`Password changed successfully for user ${userId}`);
+
+    return { message: 'Password has been changed successfully.' };
+  }
 
   /**
    * Request a password reset — sends OTP to user's phone
@@ -789,7 +835,8 @@ class AuthService {
     const user = await userRepository.findByPhone(phone);
     if (!user) {
       // Don't reveal whether user exists — return same response
-      return { message: 'If an account exists, a password reset OTP has been sent.', expiresIn: (env.OTP_EXPIRY_MINUTES || 5) * 60 };
+      const otpSettings = await platformConfigService.getOTPSettings();
+      return { message: 'If an account exists, a password reset OTP has been sent.', expiresIn: (otpSettings.expiry_minutes || 5) * 60 };
     }
 
     // Send OTP with password_reset purpose
@@ -947,6 +994,7 @@ class AuthService {
       hospitalId,
       doctorId,
       sessionId: session.id,
+      adminTier: user.admin_tier,
     };
 
     const tokens = generateTokenPair(tokenPayload);

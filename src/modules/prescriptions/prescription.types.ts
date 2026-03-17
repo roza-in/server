@@ -20,18 +20,35 @@ export interface Medication {
 }
 
 export interface PrescriptionWithRelations extends Prescription {
-    doctors?: {
+    doctor?: {
+        id: string;
+        specialization: string | null;
+        registration_number: string | null;
         users?: { name: string | null } | null;
+    } | null;
+    patient?: {
+        id: string;
+        name: string | null;
     } | null;
     consultation?: {
         id: string;
         appointment?: Record<string, unknown> | null;
     } | null;
-    hospitals?: {
+    hospital?: {
         id: string;
         name: string;
         slug?: string;
+        address_line1?: string;
+        city?: string;
+        phone?: string;
     } | null;
+
+    // Flattened fields for frontend consistency
+    patientName?: string;
+    doctorName?: string;
+    doctorSpecialization?: string;
+    doctorRegistrationNumber?: string;
+    hospitalName?: string;
 }
 
 export interface PrescriptionListItem {

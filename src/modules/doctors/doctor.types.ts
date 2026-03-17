@@ -182,18 +182,23 @@ export interface DoctorListResponse {
 // ============================================================================
 
 export interface DoctorStats {
-  totalPatients: number;
   totalAppointments: number;
   completedAppointments: number;
+  pendingAppointments: number;
   cancelledAppointments: number;
-  todayAppointments: number;
-  upcomingAppointments: number;
-  totalEarnings: number;
-  monthlyEarnings: number;
-  pendingPayouts: number;
+  totalPatients: number;
+  newPatientsThisMonth: number;
   rating: number;
-  totalRatings: number;
-  averageConsultationTime: number;
+  totalReviews: number;
+  revenue: {
+    total: number;
+    thisMonth: number;
+    pending: number;
+  };
+  todayMetrics: {
+    appointments: number;
+    completed: number;
+  };
 }
 
 export interface DoctorDashboard {

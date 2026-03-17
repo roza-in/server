@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ForbiddenError } from '../common/errors/ApiError.js';
 import { logger } from '../config/logger.js';
-import type { UserRole } from '../types/database.types.js';
+import type { UserRole, AdminTier } from '../types/database.types.js';
 
 const log = logger.child('RoleGuard');
 
@@ -148,3 +148,42 @@ export const ownerOrAdmin = (ownerParam: string) => roleGuard('admin', { ownerPa
 
 // Hospital staff (hospital admin or associated doctor)
 export const hospitalStaff = roleGuard('admin', 'hospital', 'doctor');
+
+/**
+ * Admin Tier Guard — restricts access to specific admin sub-roles.
+ * Always allows 'super' tier.
+ */
+export const tierGuard = (...allowedTiers: AdminTier[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+
+    if (!user || user.role !== 'admin') {
+      throw new ForbiddenError('Admin access required');
+    }
+
+    const userTier = user.adminTier as AdminTier;
+
+    // Super admin bypass
+    if (userTier === 'super') return next();
+
+    if (allowedTiers.includes(userTier)) {
+      return next();
+    }
+
+    log.warn('Unauthorized tier access attempt', {
+      userId: user.userId,
+      userTier,
+      requiredTiers: allowedTiers,
+      path: req.originalUrl,
+    });
+
+    throw new ForbiddenError(`This action requires one of the following admin tiers: ${allowedTiers.join(', ')}`);
+  };
+};
+
+// Convenience tier guards
+export const superAdminOnly = tierGuard('super' as any); // tierGuard handles 'super' bypass, but explicit check is safer
+export const financeAdmin = tierGuard('finance');
+export const securityAdmin = tierGuard('security');
+export const supportAdmin = tierGuard('support');
+export const opsAdmin = tierGuard('ops');

@@ -14,7 +14,7 @@ export class AppointmentRepository extends BaseRepository<Appointment> {
                 doctors(*, users!doctors_user_id_fkey(*), specializations(name)),
                 patient:users!appointments_patient_id_fkey(*),
                 family_member:family_members(*),
-                payment:payments(*),
+                payment:payments!payments_appointment_id_fkey(*),
                 consultation:consultations(*)
             `)
             .eq('id', id)
@@ -39,7 +39,8 @@ export class AppointmentRepository extends BaseRepository<Appointment> {
             doctors(
                 users!doctors_user_id_fkey(name, avatar_url),
                 specializations(name)
-            )
+            ),
+            patient:users!appointments_patient_id_fkey(id, name, avatar_url, phone, gender, date_of_birth)
         `, { count: 'exact' });
 
         // Clone filters to avoid side effects

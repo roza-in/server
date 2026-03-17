@@ -133,7 +133,9 @@ export async function uploadDoctorAvatar(req: Request, res: Response, next: Next
       contentType: file.mimetype,
     });
 
-    await doctorRepository.update(doctorId, { profile_image_url: result.publicUrl } as any);
+    if (doctorId && doctorId !== 'temp') {
+      await doctorRepository.update(doctorId, { profile_image_url: result.publicUrl } as any);
+    }
 
     return sendSuccess(res, { url: result.publicUrl, path: result.path }, 'Uploaded Avatar');
   } catch (err: any) {

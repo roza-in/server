@@ -113,19 +113,22 @@ export const cacheGetOrSet = async <T>(
         if (cached !== null) {
             return cached as T;
         }
-
-        // Fetch fresh value
-        const value = await fetchFn();
-
-        // Cache it
-        await client.setex(key, ttlSeconds, JSON.stringify(value));
-
-        return value;
-    } catch (error) {
-        logger.error('Cache operation failed', error);
-        // Fallback to direct fetch
-        return fetchFn();
+    } catch (cacheError) {
+        // Redis read failed — fall through to fetch
+        logger.error('Cache read failed', cacheError);
     }
+
+    // Fetch fresh value (let fetchFn errors propagate to caller)
+    const value = await fetchFn();
+
+    // Best-effort cache write
+    try {
+        await client.setex(key, ttlSeconds, JSON.stringify(value));
+    } catch {
+        // Ignore cache write failures
+    }
+
+    return value;
 };
 
 /**
@@ -179,6 +182,7 @@ export const CacheKeys = {
     hospitalBySlug: (slug: string) => `cache:hospital:slug:${slug}`,
     platformConfig: () => 'cache:platform:config',
     platformConfigKey: (key: string) => `cache:platform:config:${key}`,
+    hospitalConfig: (hospitalId: string) => `cache:hospital:config:${hospitalId}`,
 } as const;
 
 /** Cache TTLs in seconds */

@@ -17,6 +17,7 @@ CREATE TABLE users (
 
   -- Role
   role user_role NOT NULL DEFAULT 'patient',
+  admin_tier admin_tier,
 
   -- Profile
   name VARCHAR(200) NOT NULL,
@@ -63,6 +64,7 @@ CREATE TABLE users (
 CREATE INDEX idx_users_email ON users(email) WHERE email IS NOT NULL;
 CREATE INDEX idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
 CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_admin_tier ON users(admin_tier) WHERE role = 'admin';
 CREATE INDEX idx_users_active ON users(is_active) WHERE is_active = true;
 CREATE INDEX idx_users_search ON users USING GIN(search_vector);
 
@@ -217,3 +219,5 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_prev_refresh_hash
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_family
   ON user_sessions (token_family)
   WHERE is_active = true;
+-- Comments
+COMMENT ON COLUMN users.admin_tier IS 'Granular sub-role for admin users to restrict access scope';

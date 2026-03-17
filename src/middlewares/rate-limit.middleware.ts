@@ -3,6 +3,7 @@ import { ApiError } from '../common/errors/ApiError.js';
 import { checkRateLimit, getRedisClient } from '../config/redis.js';
 import { features } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import { platformConfigService } from '../modules/platform-config/platform-config.service.js';
 
 const log = logger.child('RateLimit');
 
@@ -66,6 +67,16 @@ export const rateLimit = (options: RateLimitOptions | number = 60000, maxRequest
   const prefix = typeof options === 'number' ? '' : options.prefix || '';
 
   return async (req: Request, res: Response, next: NextFunction) => {
+    // Fetch dynamic settings if they are the default ones from app initialization
+    let currentWindowMs = windowMs;
+    let currentMax = max;
+
+    if (prefix === 'global' && windowMs === 60000 && max === 100) {
+      const settings = await platformConfigService.getRateLimitSettings();
+      currentWindowMs = settings.window_ms;
+      currentMax = settings.max_requests;
+    }
+
     // S5: Key on authenticated user ID where available, fall back to IP.
     const authenticatedUserId = (req as any).user?.userId;
     const ipAddr = req.ip || 'unknown';
@@ -81,7 +92,7 @@ export const rateLimit = (options: RateLimitOptions | number = 60000, maxRequest
       // Attempt Redis first, fall back to memory on failure
       if (features.upstashRedis) {
         try {
-          const result = await checkRateLimit(key, max, windowMs);
+          const result = await checkRateLimit(key, currentMax, currentWindowMs);
           allowed = result.allowed;
           remaining = result.remaining;
           resetAt = result.resetAt;
@@ -102,12 +113,12 @@ export const rateLimit = (options: RateLimitOptions | number = 60000, maxRequest
           setTimeout(() => { _degradedWarningLogged = false; }, 5 * 60 * 1000).unref();
         }
 
-        const degradedMax = Math.max(1, Math.floor(max * DEGRADED_MODE_FACTOR));
+        const degradedMax = Math.max(1, Math.floor(currentMax * DEGRADED_MODE_FACTOR));
         const now = Date.now();
         let record = memoryStores.get(key);
 
         if (!record || now > record.reset) {
-          record = { count: 0, reset: now + windowMs };
+          record = { count: 0, reset: now + currentWindowMs };
         }
 
         record.count++;
@@ -119,7 +130,7 @@ export const rateLimit = (options: RateLimitOptions | number = 60000, maxRequest
       }
 
       // Set rate limit headers
-      res.setHeader('X-RateLimit-Limit', max);
+      res.setHeader('X-RateLimit-Limit', currentMax);
       res.setHeader('X-RateLimit-Remaining', remaining!);
       res.setHeader('X-RateLimit-Reset', resetAt!.toISOString());
       if (degraded) {

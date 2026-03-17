@@ -1,4 +1,4 @@
-import type { UserRole, OTPPurpose, Hospital, Doctor, Gender, BloodGroup } from '../../types/database.types.js';
+import type { UserRole, OTPPurpose, Hospital, Doctor, Gender, BloodGroup, AdminTier } from '../../types/database.types.js';
 
 /**
  * Auth Module Types — production-ready, aligned with DB schema
@@ -24,6 +24,7 @@ export interface UserProfile {
   email: string | null;
   name: string;
   role: UserRole;
+  admin_tier?: AdminTier | null;
   avatarUrl: string | null;
   coverUrl: string | null;
   phoneVerified: boolean;

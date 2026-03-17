@@ -18,12 +18,13 @@ class PatientService {
         }
 
         // Parallel data fetching for stats
-        const [stats, upcomingAppointments, recentPrescriptions, recentPayments, recentDocs] = await Promise.all([
+        const [stats, upcomingAppointments, recentPrescriptions, recentPayments, recentDocs, vitalsSnapshot] = await Promise.all([
             this.getStats(userId),
             this.getUpcomingAppointments(userId),
             this.getRecentPrescriptions(userId),
             this.getRecentPayments(userId),
-            this.getRecentDocuments(userId)
+            this.getRecentDocuments(userId),
+            this.getVitalsSnapshot(userId)
         ]);
 
         // Construct activity timeline
@@ -68,29 +69,54 @@ class PatientService {
             },
             stats,
             upcomingAppointments: upcomingAppointments.slice(0, 2),
-            activityTimeline: activityTimeline.slice(0, 5)
+            activityTimeline: activityTimeline.slice(0, 5),
+            vitalsSnapshot
         };
     }
 
     private async getStats(userId: string) {
         const aptStats = await appointmentService.getStats(userId, 'patient');
 
-        const { count: prescriptionCount } = await this.supabase
-            .from('prescriptions')
-            .select('*', { count: 'exact', head: true })
-            .eq('patient_id', userId);
-
-        const { count: recordCount } = await this.supabase
-            .from('health_documents')
-            .select('*', { count: 'exact', head: true })
-            .eq('patient_id', userId);
+        const [
+            { count: prescriptionCount },
+            { count: recordCount },
+            { count: pendingPaymentCount },
+            { count: familyCount },
+            { count: reminderCount }
+        ] = await Promise.all([
+            this.supabase.from('prescriptions').select('*', { count: 'exact', head: true }).eq('patient_id', userId),
+            this.supabase.from('health_documents').select('*', { count: 'exact', head: true }).eq('patient_id', userId),
+            this.supabase.from('payments').select('*', { count: 'exact', head: true }).eq('payer_user_id', userId).eq('status', 'pending' as any),
+            this.supabase.from('family_members').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+            this.supabase.from('medication_reminders').select('*', { count: 'exact', head: true }).eq('patient_id', userId).eq('is_active', true)
+        ]);
 
         return {
             upcomingAppointments: aptStats.upcoming,
             completedConsultations: aptStats.completed,
             prescriptions: prescriptionCount || 0,
-            healthRecords: recordCount || 0
+            healthRecords: recordCount || 0,
+            pendingPayments: pendingPaymentCount || 0,
+            familyMembersCount: familyCount || 0,
+            activeReminders: reminderCount || 0
         };
+    }
+
+    private async getVitalsSnapshot(userId: string) {
+        const { data, error } = await this.supabase
+            .from('patient_vitals')
+            .select('*')
+            .eq('patient_id', userId)
+            .order('recorded_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error) {
+            this.log.error('Failed to fetch vitals snapshot', error);
+            return null;
+        }
+
+        return data;
     }
 
     private async getUpcomingAppointments(userId: string): Promise<AppointmentListItem[]> {

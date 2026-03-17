@@ -1,10 +1,14 @@
+import bcrypt from 'bcrypt';
 import { supabaseAdmin } from '../../database/supabase-admin.js';
 import { logger } from '../../config/logger.js';
 import { BadRequestError, NotFoundError } from '../../common/errors/index.js';
 import { cacheGetOrSet, cacheInvalidate, cacheInvalidateByPrefix, CacheKeys, CacheTTL } from '../../config/redis.js';
 import { sanitizeSearchInput } from '../../common/utils/sanitize.js';
-import type { DashboardStats, AnalyticsOverview, TrendPoint, PaginatedMeta } from './admin.types.js';
-import type { VerifyHospitalBody, VerifyDoctorBody } from './admin.validator.js';
+import type { AdminTier } from '../../types/database.types.js';
+import type { DashboardStats, AnalyticsOverview, TrendPoint, PaginatedMeta, AdminAuditFilters } from './admin.types.js';
+import type { VerifyHospitalBody, VerifyDoctorBody, CreatePharmacyUserBody } from './admin.validator.js';
+import { adminFinanceService } from './admin-finance.service.js';
+import { platformConfigService } from '../platform-config/platform-config.service.js';
 
 /**
  * Admin Service — admin-specific operations
@@ -26,23 +30,66 @@ class AdminService {
   // =========================================================================
 
   async getDashboardStats(): Promise<DashboardStats> {
+    const today = new Date().toISOString().split('T')[0];
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
     const [
       { count: totalUsers },
       { count: totalHospitals },
       { count: totalDoctors },
       { count: totalAppointments },
+      { data: dailyRevenueData },
+      { data: pendingSettlementData },
+      { count: activeDisputes },
+      { count: failedPayments },
+      { count: systemErrors },
+      { count: pendingNotifs },
+      { count: webhookFailures },
+      { count: pendingHospitals },
+      { count: pendingDoctors }
     ] = await Promise.all([
+
       this.supabase.from('users').select('id', { count: 'exact', head: true }),
       this.supabase.from('hospitals').select('id', { count: 'exact', head: true }),
       this.supabase.from('doctors').select('id', { count: 'exact', head: true }),
       this.supabase.from('appointments').select('id', { count: 'exact', head: true }),
+      // Finance
+      this.supabase.from('payments').select('total_amount').eq('status', 'completed' as any).gte('created_at', today),
+      this.supabase.from('settlements').select('amount').eq('status', 'pending' as any),
+      this.supabase.from('payment_disputes').select('id', { count: 'exact', head: true }).eq('status', 'open' as any),
+      this.supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'failed' as any).gte('created_at', dayAgo),
+      // Health
+      this.supabase.from('system_logs').select('id', { count: 'exact', head: true }).eq('level', 'error').gte('created_at', dayAgo),
+      this.supabase.from('notification_queue').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      this.supabase.from('gateway_webhook_events').select('id', { count: 'exact', head: true }).eq('status', 'failed').gte('created_at', dayAgo),
+      // Update: Count from entity tables instead of unused hospital_verification_requests
+      this.supabase.from('hospitals').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
+      this.supabase.from('doctors').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
     ]);
+
+
+    const dailyRevenue = (dailyRevenueData || []).reduce((s, p) => s + Number(p.total_amount || 0), 0);
+    const pendingSettlementAmount = (pendingSettlementData || []).reduce((s, st) => s + Number(st.amount || 0), 0);
 
     return {
       totalUsers: totalUsers ?? 0,
       totalHospitals: totalHospitals ?? 0,
       totalDoctors: totalDoctors ?? 0,
       totalAppointments: totalAppointments ?? 0,
+      finance: {
+        dailyRevenue,
+        pendingSettlementAmount,
+        activeDisputeCount: activeDisputes ?? 0,
+        failedPaymentCount24h: failedPayments ?? 0
+      },
+      health: {
+        errorCount24h: systemErrors ?? 0,
+        notificationQueueDepth: pendingNotifs ?? 0,
+        webhookFailures24h: webhookFailures ?? 0,
+        pendingVerifications: (pendingHospitals || 0) + (pendingDoctors || 0)
+      }
+
+
     };
   }
 
@@ -92,6 +139,68 @@ class AdminService {
   // =========================================================================
   // HOSPITAL LISTING & MANAGEMENT
   // =========================================================================
+
+  async getHospital(id: string) {
+    const { data, error } = await this.supabase
+      .from('hospitals')
+      .select(`
+        *,
+        users:admin_user_id (
+          id,
+          name,
+          email,
+          phone
+        ),
+        doctorCount:doctors(count),
+        appointmentCount:appointments(count),
+        doctors:doctors(
+          id,
+          verification_status,
+          is_active,
+          specialization_id,
+          user:user_id(
+            id,
+            name,
+            email,
+            phone,
+            avatar_url
+          ),
+          specialization:specialization_id(
+            id,
+            name
+          )
+        ),
+        staff:hospital_staff(
+          id,
+          staff_role,
+          designation,
+          is_active,
+          user:user_id(
+            id,
+            name,
+            email,
+            phone,
+            avatar_url
+          )
+        )
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundError('Hospital not found');
+    }
+
+    // Format counts
+    const hospital = {
+      ...data,
+      adminUser: (data as any).users || null,
+      doctorCount: data.doctorCount?.[0]?.count || 0,
+      appointmentCount: data.appointmentCount?.[0]?.count || 0,
+    };
+
+    return hospital;
+  }
 
   async listHospitals(filters: any = {}) {
     const page = Number(filters.page) || 1;
@@ -171,11 +280,13 @@ class AdminService {
   async verifyHospital(hospitalId: string, payload: VerifyHospitalBody) {
     const update: Record<string, any> = {
       verification_status: payload.status,
+      license_number: payload.license_number,
       updated_at: new Date().toISOString(),
     };
 
     if (payload.status === 'verified') {
       update.verified_at = new Date().toISOString();
+      update.is_active = true;
     }
     if (payload.status === 'rejected' && payload.remarks) {
       update.rejection_reason = payload.remarks;
@@ -245,14 +356,58 @@ class AdminService {
     return { doctors, meta };
   }
 
+  async getDoctor(id: string) {
+    const { data, error } = await this.supabase
+      .from('doctors')
+      .select(`
+        *,
+        users:users!doctors_user_id_fkey(
+          id,
+          name,
+          email,
+          phone,
+          avatar_url,
+          role
+        ),
+        hospitals:hospitals!doctors_hospital_id_fkey(
+          id,
+          name,
+          type,
+          city,
+          state
+        ),
+        specialization:specializations!doctors_specialization_id_fkey(
+          id,
+          name
+        ),
+        appointmentCount:appointments(count)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundError('Doctor profile not found');
+    }
+
+    return {
+      ...data,
+      user: (data as any).users,
+      hospital: (data as any).hospitals,
+      specializationName: (data as any).specialization?.name,
+      appointmentCount: (data as any).appointmentCount?.[0]?.count || 0,
+    };
+  }
+
   async verifyDoctor(doctorId: string, payload: VerifyDoctorBody) {
     const update: Record<string, any> = {
       verification_status: payload.status,
+      license_number: payload.license_number,
       updated_at: new Date().toISOString(),
     };
 
     if (payload.status === 'verified') {
       update.verified_at = new Date().toISOString();
+      update.is_active = true;
     }
     if (payload.status === 'rejected' && payload.remarks) {
       update.rejection_reason = payload.remarks;
@@ -352,17 +507,189 @@ class AdminService {
   }
 
   // =========================================================================
-  // AUDIT LOGS
+  // PHARMACY USER MANAGEMENT
   // =========================================================================
 
-  async listAuditLogs(filters: any = {}) {
+  async createPharmacyUser(data: CreatePharmacyUserBody) {
+    // Check for existing email
+    const { data: existing } = await this.supabase
+      .from('users')
+      .select('id')
+      .eq('email', data.email)
+      .single();
+
+    if (existing) throw new BadRequestError('A user with this email already exists');
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    const { data: user, error } = await this.supabase
+      .from('users')
+      .insert({
+        name: data.name,
+        email: data.email,
+        phone: data.phone,
+        password_hash: passwordHash,
+        role: 'pharmacy',
+        is_active: true,
+        email_verified: true,
+        phone_verified: true,
+      } as any)
+      .select('id, name, email, phone, role, is_active, created_at')
+      .single();
+
+    if (error) {
+      this.log.error('Failed to create pharmacy user', error);
+      throw new BadRequestError('Failed to create pharmacy user');
+    }
+
+    return user;
+  }
+
+  async listPharmacyUsers(filters: any = {}) {
+
     const page = Number(filters.page) || 1;
     const limit = Math.min(Number(filters.limit) || 20, 100);
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await this.supabase
+    let query = this.supabase
+      .from('users')
+      .select('id, name, email, phone, role, avatar_url, is_active, is_blocked, last_login_at, created_at', { count: 'exact' })
+      .eq('role', 'pharmacy' as any);
+
+    if (filters.is_active !== undefined) query = query.eq('is_active', filters.is_active);
+    if (filters.search) {
+      const s = sanitizeSearchInput(filters.search);
+      if (s) query = query.or(`name.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%`);
+    }
+
+    const sortCol = filters.sortBy || 'created_at';
+    const sortAsc = filters.sortOrder === 'asc';
+    const validCols = ['name', 'created_at', 'email'];
+    if (validCols.includes(sortCol)) {
+      query = query.order(sortCol, { ascending: sortAsc });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
+
+    const { data, error, count } = await query.range(offset, offset + limit - 1);
+
+    if (error) {
+      this.log.error('Failed to list pharmacy users', error);
+      throw new BadRequestError('Failed to list pharmacy users');
+    }
+
+    const meta: PaginatedMeta = { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) };
+    return { pharmacyUsers: data || [], meta };
+  }
+
+  async getPharmacyUser(id: string) {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('id, name, email, phone, role, avatar_url, is_active, is_blocked, blocked_reason, last_login_at, created_at, updated_at')
+      .eq('id', id)
+      .eq('role', 'pharmacy' as any)
+      .single();
+
+    if (error || !data) throw new NotFoundError('Pharmacy user not found');
+
+    // Get order stats for this pharmacy user
+    const { count: totalOrders } = await this.supabase
+      .from('medicine_orders')
+      .select('id', { count: 'exact', head: true });
+
+    const { count: pendingOrders } = await this.supabase
+      .from('medicine_orders')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['pending', 'confirmed']);
+
+    return {
+      ...data,
+      stats: {
+        totalOrders: totalOrders ?? 0,
+        pendingOrders: pendingOrders ?? 0,
+      },
+    };
+  }
+
+  async updatePharmacyUserStatus(id: string, is_active: boolean) {
+    // Verify it's actually a pharmacy user
+    const { data: user } = await this.supabase
+      .from('users')
+      .select('id, role')
+      .eq('id', id)
+      .eq('role', 'pharmacy' as any)
+      .single();
+
+    if (!user) throw new NotFoundError('Pharmacy user not found');
+
+    const updateData: any = {
+      is_active,
+      updated_at: new Date().toISOString(),
+    };
+
+    // If activating, ensure the user is also unblocked
+    if (is_active) {
+      updateData.is_blocked = false;
+      updateData.blocked_reason = null;
+    }
+
+    const { error } = await this.supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', id);
+
+    if (error) throw new BadRequestError('Failed to update pharmacy user status');
+  }
+
+  async deletePharmacyUser(id: string) {
+    // Verify it's actually a pharmacy user
+    const { data: user } = await this.supabase
+      .from('users')
+      .select('id, role')
+      .eq('id', id)
+      .eq('role', 'pharmacy' as any)
+      .single();
+
+    if (!user) throw new NotFoundError('Pharmacy user not found');
+
+    const { error } = await this.supabase
+      .from('users')
+      .update({
+        is_active: false,
+        is_blocked: true,
+        blocked_reason: 'Deleted by admin',
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq('id', id);
+
+    if (error) throw new BadRequestError('Failed to delete pharmacy user');
+  }
+
+  // =========================================================================
+  // AUDIT LOGS
+  // =========================================================================
+
+  async listAuditLogs(filters: AdminAuditFilters = {}) {
+    const page = Number(filters.page) || 1;
+    const limit = Math.min(Number(filters.limit) || 20, 100);
+    const offset = (page - 1) * limit;
+
+    let query = this.supabase
       .from('audit_logs')
-      .select('*', { count: 'exact' })
+      .select('*', { count: 'exact' });
+
+    // Apply Filters
+    if (filters.action) query = query.eq('action', filters.action);
+    if (filters.entityType) query = query.eq('entity_type', filters.entityType);
+    if (filters.userId) query = query.eq('user_id', filters.userId);
+    if (filters.phiOnly === 'true' || filters.phiOnly === true) {
+      query = query.eq('accessed_phi', true);
+    }
+    if (filters.adminOnly === 'true' || filters.adminOnly === true) {
+      query = query.eq('user_role', 'admin');
+    }
+
+    const { data, error, count } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -382,83 +709,47 @@ class AdminService {
   }
 
   // =========================================================================
-  // PLATFORM CONFIG (was system_settings)
+  // ADMIN ACCESS MANAGEMENT
   // =========================================================================
 
-  async getSettings() {
-    return cacheGetOrSet(
-      CacheKeys.platformConfig(),
-      async () => {
-        const { data, error } = await this.supabase.from('platform_config').select('*');
-        if (error) {
-          this.log.error('Failed to fetch settings', error);
-          throw new BadRequestError('Failed to fetch settings');
-        }
-        return data || [];
-      },
-      CacheTTL.PLATFORM_CONFIG,
-    );
-  }
-
-  async getSetting(key: string) {
-    return cacheGetOrSet(
-      CacheKeys.platformConfigKey(key),
-      async () => {
-        const { data, error } = await this.supabase
-          .from('platform_config')
-          .select('*')
-          .eq('config_key', key)
-          .single();
-        if (error || !data) throw new NotFoundError('Setting not found');
-        return data;
-      },
-      CacheTTL.PLATFORM_CONFIG,
-    );
-  }
-
-  async updateSetting(key: string, value: any) {
+  async updateAdminTier(adminId: string, tier: AdminTier, updatedBy: string) {
     const { data, error } = await this.supabase
-      .from('platform_config')
-      .upsert({
-        config_key: key,
-        config_value: value,
+      .from('users')
+      .update({
+        admin_tier: tier,
         updated_at: new Date().toISOString(),
       } as any)
+      .eq('id', adminId)
+      .eq('role', 'admin')
       .select()
       .single();
 
     if (error) {
-      this.log.error('Failed to update setting', error);
-      throw new BadRequestError('Failed to update setting');
+      this.log.error('Failed to update admin tier', error);
+      throw new BadRequestError('Failed to update admin tier');
     }
-
-    // Invalidate platform config caches
-    await Promise.all([
-      cacheInvalidate(CacheKeys.platformConfig()),
-      cacheInvalidate(CacheKeys.platformConfigKey(key)),
-    ]);
 
     return data;
   }
 
+  // =========================================================================
+  // PLATFORM CONFIG (via PlatformConfigService)
+  // =========================================================================
+
+  async getSettings() {
+    return platformConfigService.getSettings();
+  }
+
+  async getSetting(key: string) {
+    return platformConfigService.getSetting(key);
+  }
+
+  async updateSetting(key: string, value: any, updatedBy?: string) {
+    return platformConfigService.updateSetting(key, value, updatedBy);
+  }
+
   async resetSetting(key: string) {
-    const { error } = await this.supabase
-      .from('platform_config')
-      .delete()
-      .eq('config_key', key);
-
-    if (error) {
-      this.log.error('Failed to reset setting', error);
-      throw new BadRequestError('Failed to reset setting');
-    }
-
-    // Invalidate platform config caches
-    await Promise.all([
-      cacheInvalidate(CacheKeys.platformConfig()),
-      cacheInvalidate(CacheKeys.platformConfigKey(key)),
-    ]);
-
-    return { reset: true };
+    return platformConfigService.resetSetting(key);
   }
 
   // =========================================================================
@@ -574,6 +865,18 @@ class AdminService {
     });
 
     return Object.entries(byDate).map(([date, count]) => ({ date, count }));
+  }
+
+  // =========================================================================
+  // FINANCE DELEGATION
+  // =========================================================================
+
+  async bulkApproveSettlements(ids: string[], adminId: string) {
+    return adminFinanceService.bulkApproveSettlements(ids, adminId);
+  }
+
+  async bulkApproveRefunds(ids: string[], adminId: string) {
+    return adminFinanceService.bulkApproveRefunds(ids, adminId);
   }
 }
 

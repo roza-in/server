@@ -60,6 +60,11 @@ class DoctorService {
       throw new ForbiddenError('Only hospital administrators can add doctors');
     }
 
+    if (hospital.verification_status !== 'verified') {
+      throw new ForbiddenError('Hospital must be verified before adding doctors');
+    }
+
+
     let doctorUserId: string;
     let createdUserId: string | null = null;
 
@@ -110,29 +115,37 @@ class DoctorService {
     const insertData: any = {
       user_id: doctorUserId,
       hospital_id: hospital.id,
-      specialization_id: (data as any).specialization_id || (data as any).specializationId || null,
-      registration_number: (data as any).registrationNumber || 'PENDING',
-      registration_council: (data as any).registrationCouncil || null,
-      qualifications: (data as any).qualifications
-        ? (Array.isArray((data as any).qualifications) ? (data as any).qualifications : [(data as any).qualifications])
-        : null,
-      experience_years: Number((data as any).experienceYears || 0),
+      specialization_id: (data as any).specializationId || (data as any).specialization_id || null,
+      registration_number: (data as any).registrationNumber || (data as any).registration_number || 'PENDING',
+      registration_council: (data as any).registrationCouncil || (data as any).registration_council || null,
+      registration_year: (data as any).registrationYear || (data as any).registration_year || null,
+      qualifications: this.asArray((data as any).qualifications),
+      experience_years: Number((data as any).experienceYears ?? (data as any).experience_years ?? 0),
       bio: (data as any).bio || null,
       languages: (data as any).languages || ['English', 'Hindi'],
+
+      // Professional Details
+      awards: this.asArray((data as any).awards),
+      publications: this.asArray((data as any).publications),
+      certifications: this.asArray((data as any).certifications),
+      memberships: this.asArray((data as any).memberships),
+
       // Fees
-      consultation_fee_online: Number((data as any).consultationFeeOnline || 0),
-      consultation_fee_in_person: Number((data as any).consultationFeeInPerson || 0),
-      consultation_fee_walk_in: Number((data as any).consultationFeeWalkIn || 0),
-      follow_up_fee: (data as any).followUpFee ? Number((data as any).followUpFee) : 0,
-      follow_up_validity_days: Number((data as any).followUpValidityDays || 7),
+      consultation_fee_online: Number((data as any).consultationFeeOnline ?? (data as any).consultation_fee_online ?? 0),
+      consultation_fee_in_person: Number((data as any).consultationFeeInPerson ?? (data as any).consultation_fee_in_person ?? 0),
+      consultation_fee_walk_in: Number((data as any).consultationFeeWalkIn ?? (data as any).consultation_fee_walk_in ?? 0),
+      follow_up_fee: Number((data as any).followUpFee ?? (data as any).follow_up_fee ?? 0),
+      follow_up_validity_days: Number((data as any).followUpValidityDays ?? (data as any).follow_up_validity_days ?? 7),
+
       // Slot config
-      slot_duration_minutes: Number((data as any).slotDurationMinutes || 15),
-      buffer_time_minutes: Number((data as any).bufferTimeMinutes || 5),
-      max_patients_per_slot: Number((data as any).maxPatientsPerSlot || 1),
+      slot_duration_minutes: Number((data as any).slotDurationMinutes ?? (data as any).slot_duration_minutes ?? 15),
+      buffer_time_minutes: Number((data as any).bufferTimeMinutes ?? (data as any).buffer_time_minutes ?? 5),
+      max_patients_per_slot: Number((data as any).maxPatientsPerSlot ?? (data as any).max_patients_per_slot ?? 1),
+
       // Consultation types
       consultation_types: ['online', 'in_person'] as ConsultationType[],
-      online_consultation_enabled: (data as any).onlineConsultationEnabled !== false,
-      walk_in_enabled: (data as any).walkInEnabled !== false,
+      online_consultation_enabled: (data as any).onlineConsultationEnabled ?? (data as any).online_consultation_enabled ?? true,
+      walk_in_enabled: (data as any).walkInEnabled ?? (data as any).walk_in_enabled ?? true,
       // Image (use og_image_url as that's what exists in schema)
       og_image_url: (data as any).profileImageUrl || null,
       // Status
@@ -499,7 +512,43 @@ class DoctorService {
       if (!hospital || hospital.admin_user_id !== userId) throw new ForbiddenError('Access denied');
     }
 
-    return await doctorRepository.getStats(doctorId);
+    const rawStats = await doctorRepository.getStats(doctorId);
+    return this.transformStats(rawStats);
+  }
+
+  /**
+   * Transform raw database stats to normalized DoctorStats structure
+   */
+  private transformStats(raw: any): DoctorStats {
+    return {
+      totalAppointments: raw.total_appointments || 0,
+      completedAppointments: 0, // Not explicitly in RPC yet
+      pendingAppointments: raw.pending_appointments || 0,
+      cancelledAppointments: 0,
+      totalPatients: raw.total_appointments || 0, // Approximation
+      newPatientsThisMonth: 0,
+      rating: raw.average_rating || 0,
+      totalReviews: raw.total_ratings || 0,
+      revenue: {
+        total: raw.total_revenue || 0,
+        thisMonth: raw.total_revenue || 0, // Approximation
+        pending: 0
+      },
+      todayMetrics: {
+        appointments: raw.today_appointments || 0,
+        completed: 0
+      }
+    };
+  }
+
+  /**
+   * Helper: Ensure value is array
+   */
+  private asArray(val: any): string[] | null {
+    if (!val) return null;
+    if (Array.isArray(val)) return val.filter(v => v !== null && v !== undefined && v !== '');
+    if (typeof val === 'string') return [val];
+    return null;
   }
 }
 

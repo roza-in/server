@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../database/supabase-admin.js';
 import { logger } from '../config/logger.js';
+import { platformConfigService } from '../modules/platform-config/platform-config.service.js';
 import { env } from '../config/env.js';
 
 interface SettlementBatch {
@@ -39,7 +40,17 @@ export const generateSettlements = async () => {
             // 1. Fetch next batch of completed appointments
             let query = supabaseAdmin
                 .from('appointments')
-                .select('id, doctor_id, hospital_id, consultation_type, consultation_fee, platform_fee, total_amount, scheduled_date')
+                .select(`
+                    id, 
+                    doctor_id, 
+                    hospital_id, 
+                    consultation_type, 
+                    consultation_fee, 
+                    platform_fee, 
+                    total_amount, 
+                    scheduled_date,
+                    payments!inner(platform_commission, net_payable)
+                `)
                 .eq('status', 'completed')
                 .order('id', { ascending: true })
                 .limit(BATCH_SIZE);
@@ -82,15 +93,19 @@ export const generateSettlements = async () => {
                 byHospital[key].push(appt);
             }
 
-            // Platform fee rates from env config
+            // Platform fee rates from DB dynamic config
+            const [consultationCommission] = await Promise.all([
+                platformConfigService.getCommissionRate(),
+            ]);
+
             const feeRates: Record<string, number> = {
-                video: env.PLATFORM_FEE_ONLINE_PERCENT || 7,
-                online: env.PLATFORM_FEE_ONLINE_PERCENT || 7,
-                in_person: env.PLATFORM_FEE_IN_PERSON_PERCENT || 4,
-                walk_in: env.PLATFORM_FEE_WALKIN_PERCENT || 2,
-                follow_up: env.PLATFORM_FEE_FOLLOWUP_PERCENT || 3,
+                video: consultationCommission,
+                online: consultationCommission,
+                in_person: consultationCommission,
+                walk_in: consultationCommission,
+                follow_up: consultationCommission, // Synchronized with main rate
             };
-            const defaultFeeRate = env.PLATFORM_FEE_ONLINE_PERCENT || 7;
+            const defaultFeeRate = consultationCommission;
 
             // 4. Build all settlement batches in-memory (no DB calls yet)
             const batches: SettlementBatch[] = [];
@@ -101,11 +116,19 @@ export const generateSettlements = async () => {
                 const lineItems: SettlementBatch['lineItems'] = [];
 
                 for (const appt of appts) {
+                    const payment = Array.isArray(appt.payments) ? appt.payments[0] : (appt.payments as any);
                     const paymentAmount = Number(appt.total_amount) || 0;
                     if (paymentAmount <= 0) continue;
 
-                    const feePercent = feeRates[appt.consultation_type] ?? defaultFeeRate;
-                    const commission = Math.round((paymentAmount * feePercent) / 100 * 100) / 100;
+                    let commission: number;
+                    if (payment && payment.platform_commission !== null && payment.platform_commission !== undefined) {
+                        commission = Number(payment.platform_commission);
+                    } else {
+                        // Fallback to dynamic calculation if payment record missing commission info
+                        const feePercent = feeRates[appt.consultation_type as string] ?? defaultFeeRate;
+                        commission = Math.round((paymentAmount * feePercent) / 100 * 100) / 100;
+                    }
+
                     const netAmount = Math.round((paymentAmount - commission) * 100) / 100;
 
                     grossAmount += paymentAmount;

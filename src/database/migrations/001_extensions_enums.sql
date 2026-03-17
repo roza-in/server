@@ -23,6 +23,14 @@ CREATE TYPE user_role AS ENUM (
   'admin'
 );
 
+CREATE TYPE admin_tier AS ENUM (
+    'super',    -- Full access to everything
+    'finance',  -- Finance, revenue, settlements, platform fees
+    'security', -- Security logs, sessions, audit trails
+    'support',  -- Support tickets, user status, patient records
+    'ops'       -- Notifications, system health, basic verifications
+);
+
 CREATE TYPE gender AS ENUM (
     'male', 
     'female', 

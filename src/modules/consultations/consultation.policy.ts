@@ -14,10 +14,10 @@ export class ConsultationPolicy extends BasePolicy<any> {
         if (user.role === 'admin') return true;
         if (!consultation) return false;
 
-        // Get IDs from joined appointment (consultation has no direct FK to users/doctors/hospitals)
-        const patientId = consultation.appointment?.patient_id;
+        // Get IDs from joined appointment or flattened response
+        const patientId = consultation.appointment?.patient_id || consultation.patient?.id;
         const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
-        const doctorId = consultation.appointment?.doctor_id;
+        const doctorId = consultation.appointment?.doctor_id || consultation.doctor?.id;
         const hospitalId = consultation.appointment?.hospital_id;
 
         const isPatient = user.role === 'patient' && patientId === user.userId;
@@ -33,7 +33,7 @@ export class ConsultationPolicy extends BasePolicy<any> {
     canUpdate(user: AuthUser, consultation?: any): boolean {
         if (!consultation) return false;
         const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
-        const doctorId = consultation.appointment?.doctor_id;
+        const doctorId = consultation.appointment?.doctor_id || consultation.doctor?.id;
         return user.role === 'doctor' && (doctorUserId === user.userId || doctorId === user.doctorId);
     }
 
@@ -43,7 +43,7 @@ export class ConsultationPolicy extends BasePolicy<any> {
     canCreatePrescription(user: AuthUser, consultation?: any): boolean {
         if (!consultation) return false;
         const doctorUserId = consultation.appointment?.doctor?.user_id || consultation.doctor?.user_id;
-        const doctorId = consultation.appointment?.doctor_id;
+        const doctorId = consultation.appointment?.doctor_id || consultation.doctor?.id;
         return user.role === 'doctor' && (doctorUserId === user.userId || doctorId === user.doctorId);
     }
 }

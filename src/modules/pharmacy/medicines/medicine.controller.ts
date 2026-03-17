@@ -276,3 +276,37 @@ export const getReturns = asyncHandler(async (req: Request, res: Response) => {
     const returns = await medicineService.getReturns(req.params.id, user.userId);
     return sendSuccess(res, returns);
 });
+
+// ============================================================================
+// Medicine CRUD (Pharmacy / Admin)
+// ============================================================================
+
+export const createMedicine = asyncHandler(async (req: Request, res: Response) => {
+    const medicine = await medicineService.createMedicine(req.body);
+    return sendCreated(res, medicine, 'Medicine created successfully');
+});
+
+export const updateMedicine = asyncHandler(async (req: Request, res: Response) => {
+    const medicine = await medicineService.updateMedicine(req.params.id, req.body);
+    return sendSuccess(res, medicine, 'Medicine updated successfully');
+});
+
+export const deleteMedicine = asyncHandler(async (req: Request, res: Response) => {
+    await medicineService.deleteMedicine(req.params.id);
+    return sendSuccess(res, null, 'Medicine deactivated successfully');
+});
+
+export const listAllOrders = asyncHandler(async (req: Request, res: Response) => {
+    const page = req.query.page ? parseInt(req.query.page as string) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+    const result = await medicineService.listAllOrders({
+        status: req.query.status as any,
+        page,
+        limit,
+    });
+    return sendPaginated(
+        res,
+        result.orders,
+        calculatePagination(result.total, page, limit),
+    );
+});

@@ -147,10 +147,15 @@ export const getDoctorAvailability = asyncHandler(async (req: Request, res: Resp
 export const getDoctorStats = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as AuthenticatedRequest).user;
   const { period } = req.query;
+  let doctorId = req.params.doctorId;
 
-  // For /me/stats route — resolve doctorId from the authenticated user
-  const doctorProfile = await doctorService.getByUserId(user.userId);
-  const stats = await doctorService.getStats(doctorProfile.id, user.userId, user.role, period as string);
+  // For /me/stats route or when doctorId is 'me', resolve doctorId from the authenticated user
+  if (!doctorId || doctorId === 'me') {
+    const doctorProfile = await doctorService.getByUserId(user.userId);
+    doctorId = doctorProfile.id;
+  }
+
+  const stats = await doctorService.getStats(doctorId, user.userId, user.role, period as string);
   return sendSuccess(res, stats);
 });
 

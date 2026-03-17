@@ -14,7 +14,20 @@ import type { CreatePrescriptionInput, PrescriptionFilters } from './prescriptio
  */
 export const createPrescription = asyncHandler(async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).user;
-    const data = req.body as CreatePrescriptionInput;
+    let data = req.body as any;
+
+    if (!data.consultation_id && data.appointmentId) {
+        const result = await consultationService.list({ appointmentId: data.appointmentId } as any, user.userId, user.role);
+        if (result.consultations.length > 0) {
+            data.consultation_id = result.consultations[0].id;
+        } else {
+            throw new ForbiddenError('No valid consultation available for this appointment.');
+        }
+    }
+
+    if (!data.consultation_id) {
+        throw new ForbiddenError('consultation_id or appointmentId is required to create a prescription.');
+    }
 
     // Validate the doctor has access to the consultation
     const consultation = await consultationService.getById(data.consultation_id, user.userId, user.role);
@@ -27,7 +40,24 @@ export const createPrescription = asyncHandler(async (req: Request, res: Respons
         throw new ForbiddenError('Invalid doctor session');
     }
 
-    const prescription = await prescriptionService.create(doctorId, data);
+    // Map frontend payload to match CreatePrescriptionInput
+    const inputData: CreatePrescriptionInput = {
+        consultation_id: data.consultation_id,
+        diagnosis: data.diagnosis ? (Array.isArray(data.diagnosis) ? data.diagnosis : [data.diagnosis]) : undefined,
+        medications: (data.medications || []).map((m: any) => ({
+            name: m.medicineName || m.name,
+            dosage: m.dosage,
+            frequency: m.frequency,
+            duration: m.duration,
+            timing: m.beforeAfterFood || m.timing,
+            instructions: m.instructions
+        })),
+        lab_tests: (data.labTests || []).map((l: any) => l.testName || l),
+        general_instructions: data.advice || data.general_instructions,
+        valid_until: data.validityDays ? new Date(Date.now() + data.validityDays * 24 * 60 * 60 * 1000).toISOString() : data.valid_until
+    };
+
+    const prescription = await prescriptionService.create(doctorId, inputData);
     return sendCreated(res, prescription, 'Prescription created successfully');
 });
 
@@ -42,7 +72,7 @@ export const getPrescription = asyncHandler(async (req: Request, res: Response) 
     const prescription = await prescriptionService.getById(prescriptionId);
 
     // Authorization check
-    const isDoctor = user.role === 'doctor' && (prescription.doctors?.users?.name !== undefined || prescription.doctor_id === user.doctorId);
+    const isDoctor = user.role === 'doctor' && (prescription.doctor?.users?.name !== undefined || prescription.doctor_id === user.doctorId);
     const isPatient = user.role === 'patient' && prescription.patient_id === user.userId;
     const isAdmin = user.role === 'admin';
     const isHospital = user.role === 'hospital' && prescription.hospital_id === user.hospitalId;
@@ -88,7 +118,14 @@ export const getMyPrescriptions = asyncHandler(async (req: Request, res: Respons
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const result = await prescriptionService.getPatientPrescriptions(user.userId, page, limit);
+    let result;
+    if (user.role === 'doctor') {
+        const doctorId = user.doctorId || user.userId;
+        result = await prescriptionService.list({ doctor_id: doctorId, page, limit });
+    } else {
+        result = await prescriptionService.getPatientPrescriptions(user.userId, page, limit);
+    }
+
     const pagination = calculatePagination(result.total, result.page, result.limit);
     return sendPaginated(res, result.prescriptions, pagination);
 });

@@ -1,12 +1,13 @@
 import { Request, Response } from 'express';
 import { adminService } from './admin.service.js';
 import { asyncHandler } from '../../middlewares/error.middleware.js';
-import { sendSuccess, sendPaginated } from '../../common/responses/index.js';
+import { sendSuccess, sendCreated, sendPaginated } from '../../common/responses/index.js';
 import type { AuthenticatedRequest } from '../../types/request.js';
 import type {
   VerifyHospitalBody,
   VerifyDoctorBody,
   SettingUpdateBody,
+  UpdateAdminTierBody,
 } from './admin.validator.js';
 
 /**
@@ -41,6 +42,12 @@ export const listHospitals = asyncHandler(async (req: Request, res: Response) =>
   return sendPaginated(res, result.hospitals, result.meta);
 });
 
+export const getHospital = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const hospital = await adminService.getHospital(id);
+  return sendSuccess(res, hospital);
+});
+
 export const verifyHospital = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const body = req.body as VerifyHospitalBody;
@@ -70,6 +77,12 @@ export const deleteHospital = asyncHandler(async (req: Request, res: Response) =
 export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
   const result = await adminService.listDoctors(req.query);
   return sendPaginated(res, result.doctors, result.meta);
+});
+
+export const getDoctor = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const doctor = await adminService.getDoctor(id);
+  return sendSuccess(res, doctor);
 });
 
 export const verifyDoctor = asyncHandler(async (req: Request, res: Response) => {
@@ -134,26 +147,46 @@ export const getAuditLog = asyncHandler(async (req: Request, res: Response) => {
   return sendSuccess(res, log);
 });
 
+export const updateAdminTier = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { tier } = req.body as UpdateAdminTierBody;
+  const authUser = (req as AuthenticatedRequest).user;
+
+  const admin = await adminService.updateAdminTier(id, tier, authUser.userId);
+  return sendSuccess(res, admin, 'Admin tier updated successfully');
+});
+
 // ============================================================================
 // SETTINGS (platform_config)
 // ============================================================================
 
+// Helper to map DB shape (config_key, config_value) → client shape (key, value)
+function mapSetting(row: any) {
+  return {
+    key: row.config_key,
+    value: row.config_value,
+    description: row.description ?? null,
+    config_type: row.config_type ?? 'general',
+    updated_at: row.updated_at,
+  };
+}
+
 export const getSettings = asyncHandler(async (_req: Request, res: Response) => {
   const settings = await adminService.getSettings();
-  return sendSuccess(res, settings);
+  return sendSuccess(res, (settings as any[]).map(mapSetting));
 });
 
 export const getSetting = asyncHandler(async (req: Request, res: Response) => {
   const { key } = req.params;
   const setting = await adminService.getSetting(key);
-  return sendSuccess(res, setting);
+  return sendSuccess(res, mapSetting(setting));
 });
 
 export const updateSetting = asyncHandler(async (req: Request, res: Response) => {
   const { key } = req.params;
   const { value } = req.body as SettingUpdateBody;
   const setting = await adminService.updateSetting(key, value);
-  return sendSuccess(res, setting, 'Setting updated');
+  return sendSuccess(res, mapSetting(setting), 'Setting updated');
 });
 
 export const resetSetting = asyncHandler(async (req: Request, res: Response) => {
@@ -202,4 +235,55 @@ export const getUserTrends = asyncHandler(async (req: Request, res: Response) =>
   const period = (req.query.period as 'day' | 'week' | 'month') || 'week';
   const trends = await adminService.getUserTrends(period);
   return sendSuccess(res, trends);
+});
+
+// ============================================================================
+// PHARMACY USERS
+// ============================================================================
+
+export const createPharmacyUser = asyncHandler(async (req: Request, res: Response) => {
+  const user = await adminService.createPharmacyUser(req.body);
+  return sendCreated(res, user, 'Pharmacy user created successfully');
+});
+
+export const listPharmacyUsers = asyncHandler(async (req: Request, res: Response) => {
+  const result = await adminService.listPharmacyUsers(req.query);
+  return sendPaginated(res, result.pharmacyUsers, result.meta);
+});
+
+export const getPharmacyUser = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = await adminService.getPharmacyUser(id);
+  return sendSuccess(res, user);
+});
+
+export const updatePharmacyUserStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  await adminService.updatePharmacyUserStatus(id, is_active);
+  return sendSuccess(res, null, `Pharmacy user ${is_active ? 'activated' : 'deactivated'} successfully`);
+});
+
+export const deletePharmacyUser = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  await adminService.deletePharmacyUser(id);
+  return sendSuccess(res, null, 'Pharmacy user deleted successfully');
+});
+
+// ============================================================================
+// BULK OPERATIONS
+// ============================================================================
+
+export const bulkApproveSettlements = asyncHandler(async (req: Request, res: Response) => {
+  const { ids } = req.body;
+  const adminId = (req as AuthenticatedRequest).user.userId;
+  const result = await adminService.bulkApproveSettlements(ids, adminId);
+  return sendSuccess(res, result, `Successfully approved ${result.count} settlements`);
+});
+
+export const bulkApproveRefunds = asyncHandler(async (req: Request, res: Response) => {
+  const { ids } = req.body;
+  const adminId = (req as AuthenticatedRequest).user.userId;
+  const result = await adminService.bulkApproveRefunds(ids, adminId);
+  return sendSuccess(res, result, `Successfully approved ${result.count} refunds`);
 });
